@@ -50,6 +50,7 @@ function ThemeStyle() {
         margin: 0;
         padding: 0;
         min-height: 100%;
+        overflow-x: hidden;
       }
       body {
         display: block;
@@ -2284,7 +2285,7 @@ function SettingsView({ settings, setSettings, jobs, staff, setStaff, roles, set
       <h1 style={{ fontSize:24, fontWeight:900, color:"var(--text-primary)", margin:"0 0 4px" }}>Settings</h1>
       <p style={{ color:"var(--text-secondary)", fontSize:14, margin:"0 0 20px" }}>Customise the app to fit how your team works.</p>
 
-      <div style={{ display:"flex", gap:24, alignItems:"flex-start" }}>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 24, alignItems: "flex-start" }}>
         <div style={{ display:"flex", flexDirection:"column", gap:2, background:"var(--card-bg)", borderRadius:12, padding:8, width:190, flexShrink:0, boxShadow:"0 1px 4px #1C233310" }}>
           {SETTINGS_TABS.map(([val,lbl]) => (
             <button key={val} onClick={() => setPage(val)}
@@ -2780,7 +2781,7 @@ function PurchaseOrdersView({ jobs, staff, customers, suppliers, purchaseOrders,
 
       <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
         {rows.map(({ po, job, supplier }) => (
-          <div key={po.id} style={{ background:"var(--card-bg)", borderRadius:12, padding:"14px 18px", boxShadow:"0 1px 4px #1C233310", display:"flex", alignItems:"center", gap:16 }}>
+            <div key={po.id} style={{ background: "var(--card-bg)", borderRadius: 12, padding: "14px 18px", boxShadow: "0 1px 4px #1C233310", display: "flex", flexWrap: "wrap", alignItems: "center", gap: 16 }}>
             <div style={{ minWidth:100 }}>
               <div style={{ fontFamily:"monospace", fontSize:13, fontWeight:800, color:ACCENT_TEXT }}>{po.poNumber}</div>
               <div style={{ fontSize:11, color:"var(--text-muted)", marginTop:2 }}>{formatDate(po.dateCreated)}</div>
