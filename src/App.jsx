@@ -51,6 +51,11 @@ function ThemeStyle() {
         padding: 0;
         min-height: 100%;
         overflow-x: hidden;
+        @media (max-width: 767px) {
+        .settings-layout { flex-direction: column !important; }
+        .settings-layout > div:first-child { width: 100% !important; }
+        .dashboard-summary-grid { grid-template-columns: 1fr !important; }
+      
       }
       body {
         display: block;
@@ -427,7 +432,7 @@ function Dashboard({ jobs, staff, roles, onNavigateStatus }) {
         </button>
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 20, marginBottom: 20 }}>
+          <div className="dashboard-summary-grid" style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 20, marginBottom: 20 }}>
         <div style={{ background:"var(--card-bg)", borderRadius: 14, padding: 24, boxShadow: "0 1px 4px #1C233310" }}>
           <h3 style={{ margin: "0 0 20px", fontSize: 13, fontWeight: 800, color:"var(--text-primary)", textTransform: "uppercase", letterSpacing: 0.5 }}>Status Breakdown</h3>
           {Object.entries(STATUS_META).map(([key, { label, color }]) => {
@@ -2285,7 +2290,7 @@ function SettingsView({ settings, setSettings, jobs, staff, setStaff, roles, set
       <h1 style={{ fontSize:24, fontWeight:900, color:"var(--text-primary)", margin:"0 0 4px" }}>Settings</h1>
       <p style={{ color:"var(--text-secondary)", fontSize:14, margin:"0 0 20px" }}>Customise the app to fit how your team works.</p>
 
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 24, alignItems: "flex-start" }}>
+          <div className="settings-layout" style={{ display: "flex", gap: 24, alignItems: "flex-start" }}>
         <div style={{ display:"flex", flexDirection:"column", gap:2, background:"var(--card-bg)", borderRadius:12, padding:8, width:190, flexShrink:0, boxShadow:"0 1px 4px #1C233310" }}>
           {SETTINGS_TABS.map(([val,lbl]) => (
             <button key={val} onClick={() => setPage(val)}
