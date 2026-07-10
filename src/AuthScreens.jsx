@@ -7,7 +7,7 @@ const INK = "#111111";
 // Shown while checking session, loading data after login, or on a fatal load error.
 export function FullScreenStatus({ message, isError }) {
   return (
-    <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: "#F1F4F8", fontFamily: "'Inter',system-ui,sans-serif" }}>
+    <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: "#0A0A0A", fontFamily: "'Inter',system-ui,sans-serif" }}>
       <div style={{ textAlign: "center", maxWidth: 360, padding: 24 }}>
         <img src="/logo-badge.png" alt="ApexOps" style={{ width: 56, height: 56, borderRadius: 12, marginBottom: 14 }} />
         <div style={{ fontSize: 22, fontWeight: 900, color: "#1C2333", marginBottom: 10 }}>ApexOps</div>
@@ -36,7 +36,7 @@ export function LoginScreen() {
   };
 
   return (
-    <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: "#F1F4F8", fontFamily: "'Inter',system-ui,sans-serif", colorScheme: "light" }}>
+    <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: "#0A0A0A", fontFamily: "'Inter',system-ui,sans-serif", colorScheme: "light" }}>
       <style>{`
         input:-webkit-autofill,
         input:-webkit-autofill:hover,

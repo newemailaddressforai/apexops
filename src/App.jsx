@@ -45,11 +45,22 @@ function ThemeStyle() {
       }
       [data-theme="dark"] input::placeholder, [data-theme="dark"] textarea::placeholder {
         color: var(--text-muted);
+}
+      html, body {
+        margin: 0;
+        padding: 0;
+        min-height: 100%;
       }
-      [data-theme="light"] { color-scheme: light; }
-      [data-theme="dark"] { color-scheme: dark; }
-      textarea {
-        color: var(--text-primary);
+      body {
+        display: block;
+        place-items: unset;
+      }
+      #root {
+        max-width: none;
+        margin: 0;
+        padding: 0;
+        text-align: left;
+        min-height: 100vh;
       }
     `}</style>
   );
@@ -3748,7 +3759,7 @@ export default function App() {
     <div data-theme={settings.theme} style={{ display:"flex",minHeight:"100vh",background:"var(--bg-page)",fontFamily:"'Inter',system-ui,sans-serif" }}>
       <ThemeStyle />
       <div style={{ width:230,background:SIDEBAR_BG,display:"flex",flexDirection:"column",position:"fixed",top:0,left:0,bottom:0,zIndex:100 }}>
-              <div style={{ padding: "28px 24px 20px" }}>
+              <div style={{ padding: "28px 24px 20px", display: "flex", justifyContent: "center" }}>
                   <img src={logoSidebar} alt="ApexOps" style={{ height: 60, width: "auto", display: "block" }} />
               </div>
         <nav style={{ flex:1,padding:"8px 12px",overflowY:"auto" }}>
