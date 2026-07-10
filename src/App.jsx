@@ -129,7 +129,8 @@ const INITIAL_PURCHASE_ORDERS = [
 
 const INITIAL_SETTINGS = {
   theme: "light", // "light" | "dark"
-  weekStartDay: 1, // Timesheets week start: 0=Sunday, 1=Monday ... 6=Saturday
+    weekStartDay: 1, // Timesheets week start: 0=Sunday, 1=Monday ... 6=Saturday
+    mobileNavTabs: ["dashboard", "jobs", "assets", "contacts"],
   visibleTabs: {
     dashboard: true, jobs: true, onhold: true, followup: true,
     schedule: true, timesheets: true, purchaseorders: true, offsite: true, contacts: true,
@@ -2274,7 +2275,8 @@ function SettingsView({ settings, setSettings, jobs, staff, setStaff, roles, set
     ["offsite","Offsite"],
     ["assets","Assets"],
     ["contacts","Contacts"],
-    ["company","Company"],
+      ["company", "Company"],
+      ["mobilenav", "Mobile Nav"],
   ];
 
   return (
@@ -2305,7 +2307,8 @@ function SettingsView({ settings, setSettings, jobs, staff, setStaff, roles, set
           {page === "assets" && <SettingsAssetsPage settings={settings} setSettings={setSettings} />}
           {page === "contacts" && <SettingsEmptyPage label="Contacts" />}
           {page === "company" && <SettingsCompanyPage staff={staff} setStaff={setStaff} roles={roles} setRoles={setRoles} />}
-        </div>
+                  {page === "mobilenav" && <SettingsMobileNavPage settings={settings} setSettings={setSettings} />}
+              </div>
       </div>
     </div>
   );
@@ -3637,6 +3640,129 @@ function getOrderedNavItems(settings) {
 }
 
 // ─── APP ──────────────────────────────────────────────────────────────────────
+// ─── MOBILE NAVIGATION (small-screen layout: top bar + slide-out menu + bottom tabs) ──
+function MobileTopBar({ onMenuClick }) {
+    return (
+        <div style={{ position: "fixed", top: 0, left: 0, right: 0, height: 56, background: SIDEBAR_BG, display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0 16px", zIndex: 200, borderBottom: `1px solid ${SIDEBAR_BORDER}` }}>
+            <img src={logoSidebar} alt="ApexOps" style={{ height: 32, width: "auto" }} />
+            <button onClick={onMenuClick} aria-label="Menu" style={{ background: "none", border: "none", color: "#fff", fontSize: 26, cursor: "pointer", padding: 6, lineHeight: 1 }}>☰</button>
+        </div>
+    );
+}
+
+function MobileMenuOverlay({ settings, tab, onNavigate, onNewJob, onSignOut, onClose, jobs }) {
+    const items = getOrderedNavItems(settings).filter(item => settings.visibleTabs[item.id] !== false);
+    return (
+        <div style={{ position: "fixed", inset: 0, background: SIDEBAR_BG, zIndex: 300, display: "flex", flexDirection: "column", padding: "16px 20px", overflowY: "auto" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24 }}>
+                <img src={logoSidebar} alt="ApexOps" style={{ height: 34, width: "auto" }} />
+                <button onClick={onClose} aria-label="Close" style={{ background: "none", border: "none", color: "#fff", fontSize: 30, cursor: "pointer", padding: 6, lineHeight: 1 }}>×</button>
+            </div>
+            <div style={{ flex: 1 }}>
+                {items.map(item => (
+                    <button key={item.id} onClick={() => onNavigate(item.id)}
+                        style={{ display: "flex", alignItems: "center", gap: 12, width: "100%", padding: "14px 14px", borderRadius: 9, border: "none", background: tab === item.id ? ACCENT : "transparent", color: tab === item.id ? INK : SIDEBAR_MUTED, fontWeight: tab === item.id ? 700 : 500, fontSize: 16, cursor: "pointer", marginBottom: 4, textAlign: "left" }}>
+                        <span style={{ fontSize: 18 }}>{item.icon}</span>{item.label}
+                    </button>
+                ))}
+                <button onClick={() => onNavigate("settings")}
+                    style={{ display: "flex", alignItems: "center", gap: 12, width: "100%", padding: "14px 14px", borderRadius: 9, border: "none", background: tab === "settings" ? ACCENT : "transparent", color: tab === "settings" ? INK : SIDEBAR_MUTED, fontWeight: tab === "settings" ? 700 : 500, fontSize: 16, cursor: "pointer", marginTop: 10 }}>
+                    <span style={{ fontSize: 18 }}>⚙</span>Settings
+                </button>
+            </div>
+            <div style={{ borderTop: `1px solid ${SIDEBAR_BORDER}`, paddingTop: 16 }}>
+                <button onClick={onNewJob} style={{ width: "100%", padding: "13px 0", background: ACCENT, color: INK, border: "none", borderRadius: 9, fontWeight: 700, fontSize: 15, cursor: "pointer", marginBottom: 14 }}>+ New Job</button>
+                <div style={{ fontSize: 11, color: SIDEBAR_MUTED, marginBottom: 10 }}>{jobs.length} total jobs</div>
+                <button onClick={onSignOut} style={{ background: "none", border: "none", color: SIDEBAR_MUTED, fontSize: 13, cursor: "pointer", padding: 0, textDecoration: "underline" }}>Sign Out</button>
+            </div>
+        </div>
+    );
+}
+
+function MobileBottomNav({ settings, tab, onNavigate }) {
+    const tabIds = (settings.mobileNavTabs && settings.mobileNavTabs.length) ? settings.mobileNavTabs : ["dashboard", "jobs", "assets", "contacts"];
+    const items = tabIds.map(id => id === "settings" ? { id: "settings", label: "Settings", icon: "⚙" } : NAV_ITEMS.find(n => n.id === id)).filter(Boolean);
+    return (
+        <div style={{ position: "fixed", bottom: 0, left: 0, right: 0, height: 62, background: SIDEBAR_BG, display: "flex", borderTop: `1px solid ${SIDEBAR_BORDER}`, zIndex: 200 }}>
+            {items.map(item => {
+                const active = tab === item.id;
+                return (
+                    <button key={item.id} onClick={() => onNavigate(item.id)}
+                        style={{ flex: 1, background: "none", border: "none", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 3, color: active ? ACCENT : SIDEBAR_MUTED, cursor: "pointer", padding: "6px 2px" }}>
+                        <span style={{ fontSize: 19 }}>{item.icon}</span>
+                        <span style={{ fontSize: 10, fontWeight: active ? 700 : 500 }}>{item.label}</span>
+                    </button>
+                );
+            })}
+        </div>
+    );
+}
+
+function SettingsMobileNavPage({ settings, setSettings }) {
+    const allItems = [...NAV_ITEMS, { id: "settings", label: "Settings", icon: "⚙" }];
+    const selected = settings.mobileNavTabs || [];
+    const dragIndex = useRef(null);
+    const [dragOverIndex, setDragOverIndex] = useState(null);
+
+    const toggleItem = (id) => {
+        setSettings(p => {
+            const cur = p.mobileNavTabs || [];
+            if (cur.includes(id)) return { ...p, mobileNavTabs: cur.filter(x => x !== id) };
+            if (cur.length >= 5) return p;
+            return { ...p, mobileNavTabs: [...cur, id] };
+        });
+    };
+    const reorder = (from, to) => {
+        if (from == null || from === to) return;
+        setSettings(p => {
+            const cur = [...(p.mobileNavTabs || [])];
+            const [moved] = cur.splice(from, 1);
+            cur.splice(to, 0, moved);
+            return { ...p, mobileNavTabs: cur };
+        });
+    };
+
+    return (
+        <div>
+            <div style={{ background: "var(--card-bg)", borderRadius: 14, padding: 24, boxShadow: "0 1px 4px #1C233310", maxWidth: 560, marginBottom: 20 }}>
+                <h2 style={{ fontSize: 15, fontWeight: 800, color: "var(--text-primary)", margin: "0 0 4px" }}>Bottom Navigation (Mobile)</h2>
+                <p style={{ fontSize: 12, color: "var(--text-muted)", margin: "0 0 16px" }}>Choose up to 5 pages to show in the bottom bar on phones, and drag to set their order. {selected.length}/5 selected.</p>
+                {selected.length > 0 && (
+                    <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 20 }}>
+                        {selected.map((id, i) => {
+                            const item = allItems.find(x => x.id === id);
+                            if (!item) return null;
+                            return (
+                                <div key={id}
+                                    draggable
+                                    onDragStart={(e) => { dragIndex.current = i; e.dataTransfer.effectAllowed = "move"; }}
+                                    onDragOver={(e) => { e.preventDefault(); if (dragOverIndex !== i) setDragOverIndex(i); }}
+                                    onDragLeave={() => setDragOverIndex(prev => prev === i ? null : prev)}
+                                    onDrop={(e) => { e.preventDefault(); reorder(dragIndex.current, i); dragIndex.current = null; setDragOverIndex(null); }}
+                                    onDragEnd={() => { dragIndex.current = null; setDragOverIndex(null); }}
+                                    style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 12px", background: dragOverIndex === i ? "var(--bg-subtle2)" : "var(--bg-subtle)", borderRadius: 8, border: dragOverIndex === i ? `1.5px dashed ${ACCENT_TEXT}` : "1.5px solid transparent" }}>
+                                    <span style={{ fontSize: 15, color: "var(--text-muted)", cursor: "grab", userSelect: "none", lineHeight: 1 }}>⠿</span>
+                                    <span style={{ fontSize: 14 }}>{item.icon}</span>
+                                    <span style={{ flex: 1, fontSize: 13, fontWeight: 600, color: "var(--text-primary)" }}>{item.label}</span>
+                                    <button onClick={() => toggleItem(id)} style={{ background: "none", border: "none", color: "var(--text-muted)", fontSize: 16, cursor: "pointer", padding: 0 }}>×</button>
+                                </div>
+                            );
+                        })}
+                    </div>
+                )}
+                <div style={{ fontSize: 12, fontWeight: 700, color: "var(--text-secondary)", textTransform: "uppercase", letterSpacing: 0.5, margin: "16px 0 10px" }}>Add a page</div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                    {allItems.filter(item => !selected.includes(item.id)).map(item => (
+                        <button key={item.id} onClick={() => toggleItem(item.id)} disabled={selected.length >= 5}
+                            style={{ display: "flex", alignItems: "center", gap: 6, padding: "7px 12px", borderRadius: 7, border: "1.5px solid var(--border-strong)", background: "var(--card-bg)", color: selected.length >= 5 ? "var(--border-strong)" : "var(--text-secondary)", fontWeight: 600, fontSize: 12, cursor: selected.length >= 5 ? "not-allowed" : "pointer" }}>
+                            <span>{item.icon}</span>{item.label}
+                        </button>
+                    ))}
+                </div>
+            </div>
+        </div>
+    );
+}
 export default function App() {
     const [tab, setTab] = useState("dashboard");
 
@@ -3663,6 +3789,13 @@ export default function App() {
     const [jobsPresetFilter, setJobsPresetFilter] = useState("all");
     const [jobsViewKey, setJobsViewKey] = useState(0);
     const [showCompletedJobs, setShowCompletedJobs] = useState(false);
+    const [isMobile, setIsMobile] = useState(() => window.innerWidth < 768);
+    const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+    useEffect(() => {
+        const onResize = () => setIsMobile(window.innerWidth < 768);
+        window.addEventListener("resize", onResize);
+        return () => window.removeEventListener("resize", onResize);
+    }, []);
 
     // ─── Auth lifecycle ─────────────────────────────────────────────────────
     useEffect(() => {
@@ -3758,33 +3891,50 @@ export default function App() {
   return (
     <div data-theme={settings.theme} style={{ display:"flex",minHeight:"100vh",background:"var(--bg-page)",fontFamily:"'Inter',system-ui,sans-serif" }}>
       <ThemeStyle />
-      <div style={{ width:230,background:SIDEBAR_BG,display:"flex",flexDirection:"column",position:"fixed",top:0,left:0,bottom:0,zIndex:100 }}>
-              <div style={{ padding: "28px 24px 20px", display: "flex", justifyContent: "center" }}>
-                  <img src={logoSidebar} alt="ApexOps" style={{ height: 90, width: "auto", display: "block" }} />
-              </div>
-        <nav style={{ flex:1,padding:"8px 12px",overflowY:"auto" }}>
-          {getOrderedNavItems(settings).filter(item => settings.visibleTabs[item.id] !== false).map(item=>(
-            <button key={item.id} onClick={()=>{ closeJobArea(); if (item.id==="jobs") { setJobsPresetFilter("all"); setJobsViewKey(k=>k+1); } setTab(item.id); }}
-              style={{ display:"flex",alignItems:"center",gap:10,width:"100%",padding:"11px 14px",borderRadius:9,border:"none",background:tab===item.id?ACCENT:"transparent",color:tab===item.id?INK:SIDEBAR_MUTED,fontWeight:tab===item.id?700:500,fontSize:14,cursor:"pointer",marginBottom:2,textAlign:"left" }}>
-              <span style={{ fontSize:15 }}>{item.icon}</span>
-              {item.label}
-            </button>
-          ))}
-        </nav>
-        <div style={{ padding:"8px 12px",borderTop:`1px solid ${SIDEBAR_BORDER}` }}>
-          <button onClick={()=>{ closeJobArea(); setTab("settings"); }}
-            style={{ display:"flex",alignItems:"center",gap:10,width:"100%",padding:"11px 14px",borderRadius:9,border:"none",background:tab==="settings"?ACCENT:"transparent",color:tab==="settings"?INK:SIDEBAR_MUTED,fontWeight:tab==="settings"?700:500,fontSize:14,cursor:"pointer" }}>
-            <span style={{ fontSize:15 }}>⚙</span>Settings
-          </button>
-        </div>
-              <div style={{ padding: "12px 24px 20px", borderTop: `1px solid ${SIDEBAR_BORDER}` }}>
-                  <button onClick={openNewJob} style={{ width: "100%", padding: "11px 0", background: ACCENT, color: INK, border: "none", borderRadius: 9, fontWeight: 700, fontSize: 14, cursor: "pointer" }}>+ New Job</button>
-                  <div style={{ fontSize: 11, color: SIDEBAR_MUTED, marginTop: 10 }}>{jobs.length} total jobs</div>
-                  <button onClick={handleSignOut} style={{ background: "none", border: "none", color: SIDEBAR_MUTED, fontSize: 11, marginTop: 10, cursor: "pointer", padding: 0, textDecoration: "underline" }}>Sign Out</button>
-              </div>
-      </div>
+          {!isMobile && (
+              <div style={{ width: 230, background: SIDEBAR_BG, display: "flex", flexDirection: "column", position: "fixed", top: 0, left: 0, bottom: 0, zIndex: 100 }}>
+                  <div style={{ padding: "28px 24px 20px", display: "flex", justifyContent: "center" }}>
+                      <img src={logoSidebar} alt="ApexOps" style={{ height: 90, width: "auto", display: "block" }} />
+                  </div>
+                  <nav style={{ flex: 1, padding: "8px 12px", overflowY: "auto" }}>
+                      {getOrderedNavItems(settings).filter(item => settings.visibleTabs[item.id] !== false).map(item => (
+                          <button key={item.id} onClick={() => { closeJobArea(); if (item.id === "jobs") { setJobsPresetFilter("all"); setJobsViewKey(k => k + 1); } setTab(item.id); }}
+                              style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", padding: "11px 14px", borderRadius: 9, border: "none", background: tab === item.id ? ACCENT : "transparent", color: tab === item.id ? INK : SIDEBAR_MUTED, fontWeight: tab === item.id ? 700 : 500, fontSize: 14, cursor: "pointer", marginBottom: 2, textAlign: "left" }}>
+                              <span style={{ fontSize: 15 }}>{item.icon}</span>
+                              {item.label}
+                          </button>
+                      ))}
+                  </nav>
+                  <div style={{ padding: "8px 12px", borderTop: `1px solid ${SIDEBAR_BORDER}` }}>
+                      <button onClick={() => { closeJobArea(); setTab("settings"); }}
+                          style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", padding: "11px 14px", borderRadius: 9, border: "none", background: tab === "settings" ? ACCENT : "transparent", color: tab === "settings" ? INK : SIDEBAR_MUTED, fontWeight: tab === "settings" ? 700 : 500, fontSize: 14, cursor: "pointer" }}>
+                          <span style={{ fontSize: 15 }}>⚙</span>Settings
+                      </button>
+                  </div>
+                  <div style={{ padding: "12px 24px 20px", borderTop: `1px solid ${SIDEBAR_BORDER}` }}>
+                      <button onClick={openNewJob} style={{ width: "100%", padding: "11px 0", background: ACCENT, color: INK, border: "none", borderRadius: 9, fontWeight: 700, fontSize: 14, cursor: "pointer" }}>+ New Job</button>
+                      <div style={{ fontSize: 11, color: SIDEBAR_MUTED, marginTop: 10 }}>{jobs.length} total jobs</div>
+                      <button onClick={handleSignOut} style={{ background: "none", border: "none", color: SIDEBAR_MUTED, fontSize: 11, marginTop: 10, cursor: "pointer", padding: 0, textDecoration: "underline" }}>Sign Out</button>
+                  </div>
+              </div>)}
+              
 
-      <div style={{ marginLeft:230,flex:1,padding:32,maxWidth:"calc(100vw - 230px)",boxSizing:"border-box" }}>
+          {isMobile && <MobileTopBar onMenuClick={() => setMobileMenuOpen(true)} />}
+          {isMobile && mobileMenuOpen && (
+              <MobileMenuOverlay
+                  settings={settings} tab={tab} jobs={jobs}
+                  onNavigate={(id) => { closeJobArea(); if (id === "jobs") { setJobsPresetFilter("all"); setJobsViewKey(k => k + 1); } setTab(id); setMobileMenuOpen(false); }}
+                  onNewJob={() => { openNewJob(); setMobileMenuOpen(false); }}
+                  onSignOut={handleSignOut}
+                  onClose={() => setMobileMenuOpen(false)}
+              />
+          )}
+          {isMobile && (
+              <MobileBottomNav settings={settings} tab={tab}
+                  onNavigate={(id) => { closeJobArea(); if (id === "jobs") { setJobsPresetFilter("all"); setJobsViewKey(k => k + 1); } setTab(id); }} />
+          )}
+
+          <div style={{ marginLeft: isMobile ? 0 : 230, marginTop: isMobile ? 56 : 0, marginBottom: isMobile ? 62 : 0, flex: 1, padding: isMobile ? 16 : 32, maxWidth: isMobile ? "100vw" : "calc(100vw - 230px)", boxSizing: "border-box" }}>
         {jobPageStack.length > 0 ? (
           <>
             {currentJobPage.view === "detail" && (

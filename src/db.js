@@ -37,7 +37,8 @@ const settingsMap = {
     job_sheet_footer_note: s.jobSheetFooterNote || "",
     job_sheet_fields: s.jobSheetFields,
     job_summary_fields: s.jobSummaryFields || [],
-    asset_summary_fields: s.assetSummaryFields || [],
+        asset_summary_fields: s.assetSummaryFields || [],
+        mobile_nav_tabs: s.mobileNavTabs || ["dashboard", "jobs", "assets", "contacts"],
   }),
   fromRow: (r) => ({
     theme: r.theme,
@@ -50,7 +51,8 @@ const settingsMap = {
     jobSheetFooterNote: r.job_sheet_footer_note || "",
     jobSheetFields: r.job_sheet_fields,
     jobSummaryFields: r.job_summary_fields || [],
-    assetSummaryFields: r.asset_summary_fields || [],
+      assetSummaryFields: r.asset_summary_fields || [],
+      mobileNavTabs: r.mobile_nav_tabs || ["dashboard", "jobs", "assets", "contacts"],
   }),
 };
 
