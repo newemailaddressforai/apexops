@@ -8,7 +8,7 @@ const ACCENT = "#D4FF3D";      // lime yellow — buttons, active states, highli
 const ACCENT_TEXT = "#7A8A00"; // darker olive-lime — readable accent text on white
 const ACCENT_SOFT = "#F6FFDE"; // pale lime tint — hover backgrounds
 const INK = "#111111";         // near-black body text on white pages
-const SIDEBAR_BG = "#0A0A0A";  // black sidebar (same in both themes)
+const SIDEBAR_BG = "#000000";  // black sidebar (same in both themes)
 const SIDEBAR_BORDER = "#232323";
 const SIDEBAR_MUTED = "#9A9A9A";
 
@@ -3760,7 +3760,7 @@ export default function App() {
       <ThemeStyle />
       <div style={{ width:230,background:SIDEBAR_BG,display:"flex",flexDirection:"column",position:"fixed",top:0,left:0,bottom:0,zIndex:100 }}>
               <div style={{ padding: "28px 24px 20px", display: "flex", justifyContent: "center" }}>
-                  <img src={logoSidebar} alt="ApexOps" style={{ height: 60, width: "auto", display: "block" }} />
+                  <img src={logoSidebar} alt="ApexOps" style={{ height: 90, width: "auto", display: "block" }} />
               </div>
         <nav style={{ flex:1,padding:"8px 12px",overflowY:"auto" }}>
           {getOrderedNavItems(settings).filter(item => settings.visibleTabs[item.id] !== false).map(item=>(

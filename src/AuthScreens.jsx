@@ -7,9 +7,9 @@ const INK = "#111111";
 // Shown while checking session, loading data after login, or on a fatal load error.
 export function FullScreenStatus({ message, isError }) {
   return (
-    <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: "#0A0A0A", fontFamily: "'Inter',system-ui,sans-serif" }}>
+    <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: "#000000", fontFamily: "'Inter',system-ui,sans-serif" }}>
       <div style={{ textAlign: "center", maxWidth: 360, padding: 24 }}>
-        <img src="/logo-badge.png" alt="ApexOps" style={{ width: 56, height: 56, borderRadius: 12, marginBottom: 14 }} />
+        <img src="/logo-badge.png" alt="ApexOps" style={{ width: 65, height: 65, borderRadius: 12, marginBottom: 14 }} />
         <div style={{ fontSize: 22, fontWeight: 900, color: "#1C2333", marginBottom: 10 }}>ApexOps</div>
         <div style={{ fontSize: 14, color: isError ? "#DC2626" : "#5C6B82", lineHeight: 1.5 }}>{message}</div>
       </div>
@@ -46,10 +46,12 @@ export function LoginScreen() {
           transition: background-color 9999s ease-in-out 0s;
         }
       `}</style>
-      <div style={{ width: 380, maxWidth: "92vw", background: "#ffffff", borderRadius: 16, padding: 36, boxShadow: "0 4px 24px #1C233318" }}>
-        <img src="/logo-badge.png" alt="ApexOps" style={{ width: 72, height: 72, borderRadius: 16, marginBottom: 16 }} />
-        <div style={{ fontSize: 24, fontWeight: 900, color: "#1C2333", marginBottom: 4 }}>ApexOps</div>
-        <div style={{ fontSize: 13, color: "#5C6B82", marginBottom: 28 }}>Sign in to your account</div>
+          <div style={{ width: 380, maxWidth: "92vw", background: "#ffffff", borderRadius: 16, padding: 36, boxShadow: "0 4px 24px #1C233318" }}>
+              <div style={{ textAlign: "center", marginBottom: 28 }}>
+                  <img src="/logo-badge.png" alt="ApexOps" style={{ width: 96, height: 96, borderRadius: 20, marginBottom: 16 }} />
+                  <div style={{ fontSize: 24, fontWeight: 900, color: "#1C2333", marginBottom: 4 }}>ApexOps</div>
+                  <div style={{ fontSize: 13, color: "#5C6B82" }}>Sign in to your account</div>
+              </div>
 
         <form onSubmit={handleSubmit}>
           <div style={{ marginBottom: 14 }}>
