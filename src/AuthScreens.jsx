@@ -9,6 +9,7 @@ export function FullScreenStatus({ message, isError }) {
   return (
     <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: "#F1F4F8", fontFamily: "'Inter',system-ui,sans-serif" }}>
       <div style={{ textAlign: "center", maxWidth: 360, padding: 24 }}>
+        <img src="/logo-badge.png" alt="ApexOps" style={{ width: 56, height: 56, borderRadius: 12, marginBottom: 14 }} />
         <div style={{ fontSize: 22, fontWeight: 900, color: "#1C2333", marginBottom: 10 }}>ApexOps</div>
         <div style={{ fontSize: 14, color: isError ? "#DC2626" : "#5C6B82", lineHeight: 1.5 }}>{message}</div>
       </div>
@@ -46,6 +47,7 @@ export function LoginScreen() {
         }
       `}</style>
       <div style={{ width: 380, maxWidth: "92vw", background: "#ffffff", borderRadius: 16, padding: 36, boxShadow: "0 4px 24px #1C233318" }}>
+        <img src="/logo-badge.png" alt="ApexOps" style={{ width: 72, height: 72, borderRadius: 16, marginBottom: 16 }} />
         <div style={{ fontSize: 24, fontWeight: 900, color: "#1C2333", marginBottom: 4 }}>ApexOps</div>
         <div style={{ fontSize: 13, color: "#5C6B82", marginBottom: 28 }}>Sign in to your account</div>
 

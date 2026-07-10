@@ -1,6 +1,7 @@
 import { useState, useMemo, useRef, useEffect, Fragment } from "react";
 import { supabase } from "./supabaseClient";
 import { useSyncedTable, useSyncedSingleton, useSyncedJobs, fetchAllData, ensureSingletonsExist, staffMap, rolesMap, contactMap, companyMap, settingsMap, timeEntryMap, poMap, assetMap, assetGroupMap } from "./db";
+import logoSidebar from "./assets/logo-sidebar.png";
 import { LoginScreen, FullScreenStatus } from "./AuthScreens";
 // ─── Theme ─────────────────────────────────────────────────────────────────────
 const ACCENT = "#D4FF3D";      // lime yellow — buttons, active states, highlights
@@ -44,6 +45,11 @@ function ThemeStyle() {
       }
       [data-theme="dark"] input::placeholder, [data-theme="dark"] textarea::placeholder {
         color: var(--text-muted);
+      }
+      [data-theme="light"] { color-scheme: light; }
+      [data-theme="dark"] { color-scheme: dark; }
+      textarea {
+        color: var(--text-primary);
       }
     `}</style>
   );
@@ -3742,9 +3748,9 @@ export default function App() {
     <div data-theme={settings.theme} style={{ display:"flex",minHeight:"100vh",background:"var(--bg-page)",fontFamily:"'Inter',system-ui,sans-serif" }}>
       <ThemeStyle />
       <div style={{ width:230,background:SIDEBAR_BG,display:"flex",flexDirection:"column",position:"fixed",top:0,left:0,bottom:0,zIndex:100 }}>
-        <div style={{ padding:"28px 24px 20px" }}>
-          <div style={{ fontSize:22,fontWeight:900,color:"#fff",lineHeight:1.2 }}>ApexOps</div>
-        </div>
+              <div style={{ padding: "28px 24px 20px" }}>
+                  <img src={logoSidebar} alt="ApexOps" style={{ height: 60, width: "auto", display: "block" }} />
+              </div>
         <nav style={{ flex:1,padding:"8px 12px",overflowY:"auto" }}>
           {getOrderedNavItems(settings).filter(item => settings.visibleTabs[item.id] !== false).map(item=>(
             <button key={item.id} onClick={()=>{ closeJobArea(); if (item.id==="jobs") { setJobsPresetFilter("all"); setJobsViewKey(k=>k+1); } setTab(item.id); }}
