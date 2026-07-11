@@ -3,6 +3,7 @@ import { supabase } from "./supabaseClient";
 import { useSyncedTable, useSyncedSingleton, useSyncedJobs, fetchAllData, ensureSingletonsExist, staffMap, rolesMap, contactMap, companyMap, settingsMap, timeEntryMap, poMap, assetMap, assetGroupMap } from "./db";
 import logoSidebar from "./assets/logo-sidebar.png";
 import { LoginScreen, FullScreenStatus } from "./AuthScreens";
+import JSZip from "jszip";
 // ─── Theme ─────────────────────────────────────────────────────────────────────
 const ACCENT = "#D4FF3D";      // lime yellow — buttons, active states, highlights
 const ACCENT_TEXT = "#7A8A00"; // darker olive-lime — readable accent text on white
@@ -137,6 +138,7 @@ const INITIAL_SETTINGS = {
   theme: "light", // "light" | "dark"
     weekStartDay: 1, // Timesheets week start: 0=Sunday, 1=Monday ... 6=Saturday
     mobileNavTabs: ["dashboard", "jobs", "assets", "contacts"],
+    dashboardStaffIds: [], // empty = show everyone
   visibleTabs: {
     dashboard: true, jobs: true, onhold: true, followup: true,
     schedule: true, timesheets: true, purchaseorders: true, offsite: true, contacts: true,
@@ -160,7 +162,7 @@ const INITIAL_SETTINGS = {
     { key: "orderNo",       label: "Order No (PO)",  enabled: true, width: 120 },
     { key: "description",   label: "Description",    enabled: true, width: 260 },
     { key: "customer",      label: "Customer",       enabled: true, width: 160 },
-    { key: "assignedStaff", label: "Assigned Staff", enabled: true, width: 150 },
+    { key: "assignedStaff", label: "Assigned Staff", enabled: true, width: 190 },
     { key: "status",        label: "Status",         enabled: true, width: 150 },
   ],
   assetSummaryFields: [
@@ -340,6 +342,50 @@ function getMonthDays(y, m) {
   });
 }
 function exportCSV(filename, headers, rows) {
+    async function exportPhotosZip(job) {
+        async function downloadElementAsPDF(elementId, filename) {
+            const html2canvas = (await import("html2canvas")).default;
+            const { jsPDF } = await import("jspdf");
+            const el = document.getElementById(elementId);
+            if (!el) return;
+            const canvas = await html2canvas(el, { scale: 2, useCORS: true, backgroundColor: "#ffffff" });
+            const imgData = canvas.toDataURL("image/png");
+            const pdf = new jsPDF({ unit: "mm", format: "a4" });
+            const pageWidth = 210, pageHeight = 297;
+            const imgWidth = pageWidth;
+            const imgHeight = (canvas.height * imgWidth) / canvas.width;
+            let heightLeft = imgHeight;
+            let position = 0;
+            pdf.addImage(imgData, "PNG", 0, position, imgWidth, imgHeight);
+            heightLeft -= pageHeight;
+            while (heightLeft > 0) {
+                position -= pageHeight;
+                pdf.addPage();
+                pdf.addImage(imgData, "PNG", 0, position, imgWidth, imgHeight);
+                heightLeft -= pageHeight;
+            }
+            pdf.save(filename);
+        }
+        const zip = new JSZip();
+        const notes = job.jobNotes || [];
+        let count = 0;
+        for (const note of notes) {
+            for (let i = 0; i < (note.photos || []).length; i++) {
+                const res = await fetch(note.photos[i]);
+                const blob = await res.blob();
+                count++;
+                const safeName = note.name.replace(/[^a-z0-9]/gi, "_").slice(0, 30);
+                zip.file(`${safeName || "photo"}-${i + 1}.jpg`, blob);
+            }
+        }
+        if (count === 0) return false;
+        const content = await zip.generateAsync({ type: "blob" });
+        const url = URL.createObjectURL(content);
+        const a = Object.assign(document.createElement("a"), { href: url, download: `${job.id}-photos.zip` });
+        a.click();
+        URL.revokeObjectURL(url);
+        return true;
+    }
   const esc = (v) => { const s = String(v ?? ""); return (s.includes(",") || s.includes('"') || s.includes("\n")) ? `"${s.replace(/"/g, '""')}"` : s; };
   const csv = [headers.map(esc).join(","), ...rows.map(r => r.map(esc).join(","))].join("\n");
   const url = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
@@ -404,17 +450,27 @@ function Btn({ children, variant = "primary", ...props }) {
 }
 
 // ─── DASHBOARD ────────────────────────────────────────────────────────────────
-function Dashboard({ jobs, staff, roles, onNavigateStatus }) {
-  const total = jobs.length;
-  const inProg = jobs.filter(j => j.status === "in-progress").length;
-  const onHold = jobs.filter(j => j.status === "on-hold").length;
-  const followUp = jobs.filter(j => j.status === "follow-up").length;
-  const readyToAssemble = jobs.filter(j => j.status === "ready-to-assemble").length;
-  const completed = jobs.filter(j => j.status === "completed").length;
-  const notStarted = jobs.filter(j => j.status === "not-started").length;
-  const holdJobs = jobs.filter(j => j.status === "on-hold");
-  const followJobs = jobs.filter(j => j.status === "follow-up");
-  const personStats = staff.map(s => {
+function Dashboard({ jobs, staff, roles, settings, onNavigateStatus }) {
+    const total = jobs.length;
+    const inProg = jobs.filter(j => j.status === "in-progress").length;
+    const onHold = jobs.filter(j => j.status === "on-hold").length;
+    const followUp = jobs.filter(j => j.status === "follow-up").length;
+    const readyToAssemble = jobs.filter(j => j.status === "ready-to-assemble").length;
+    const completed = jobs.filter(j => j.status === "completed").length;
+    const notStarted = jobs.filter(j => j.status === "not-started").length;
+    const today2 = new Date().toISOString().split("T")[0];
+    const holdJobs = jobs.filter(j => j.status === "on-hold")
+        .slice()
+        .sort((a, b) => (b.holdSince ? daysDiff(b.holdSince, today2) : 0) - (a.holdSince ? daysDiff(a.holdSince, today2) : 0))
+        .slice(0, 5);
+    const followJobs = jobs.filter(j => j.status === "follow-up")
+        .slice()
+        .sort((a, b) => (b.followUpSince ? daysDiff(b.followUpSince, today2) : 0) - (a.followUpSince ? daysDiff(a.followUpSince, today2) : 0))
+        .slice(0, 5);
+    const dashboardStaff = (settings?.dashboardStaffIds && settings.dashboardStaffIds.length)
+        ? staff.filter(s => settings.dashboardStaffIds.includes(s.id))
+        : staff;
+    const personStats = dashboardStaff.map(s => {
     const mine = jobs.filter(j => j.assignedTo.includes(s.id));
     return { ...s, inProg: mine.filter(j => j.status === "in-progress").length, onHold: mine.filter(j => j.status === "on-hold").length, followUp: mine.filter(j => j.status === "follow-up").length, readyToAssemble: mine.filter(j => j.status === "ready-to-assemble").length, completed: mine.filter(j => j.status === "completed").length, total: mine.length };
   });
@@ -455,16 +511,16 @@ function Dashboard({ jobs, staff, roles, onNavigateStatus }) {
           {holdJobs.length === 0 ? <p style={{ color:"var(--text-muted)", fontSize: 13 }}>No jobs on hold.</p> : holdJobs.map((j, i) => {
             const days = j.holdSince ? daysDiff(j.holdSince, new Date().toISOString().split("T")[0]) : 0;
             return (
-              <div key={j.id} style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12, padding: "8px 12px", background: "#FFFBF0", borderRadius: 8, borderLeft: `3px solid ${HOLD_COLORS[i % HOLD_COLORS.length]}` }}>
-                <div style={{ flex: 1 }}>
-                  <div style={{ fontSize: 12, fontWeight: 700, color:"var(--text-primary)" }}>{j.id}</div>
-                  <div style={{ fontSize: 11, color:"var(--text-secondary)", marginTop: 1 }}>{j.title}</div>
+                <div key={j.id} style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12, padding: "8px 12px", background: "#FFFBF0", borderRadius: 8, borderLeft: `3px solid ${HOLD_COLORS[i % HOLD_COLORS.length]}` }}>
+                    <div style={{ flex: 1 }}>
+                        <div style={{ fontSize: 12, fontWeight: 700, color: "#78350F" }}>{j.id}</div>
+                        <div style={{ fontSize: 11, color: "#92400E", marginTop: 1 }}>{j.title}</div>
+                    </div>
+                    <div style={{ textAlign: "right" }}>
+                        <div style={{ fontSize: 18, fontWeight: 900, color: HOLD_COLORS[i % HOLD_COLORS.length] }}>{days}d</div>
+                        <div style={{ fontSize: 10, color: "#92400E" }}>on hold</div>
+                    </div>
                 </div>
-                <div style={{ textAlign: "right" }}>
-                  <div style={{ fontSize: 18, fontWeight: 900, color: HOLD_COLORS[i % HOLD_COLORS.length] }}>{days}d</div>
-                  <div style={{ fontSize: 10, color:"var(--text-muted)" }}>on hold</div>
-                </div>
-              </div>
             );
           })}
         </div>
@@ -473,16 +529,16 @@ function Dashboard({ jobs, staff, roles, onNavigateStatus }) {
           {followJobs.length === 0 ? <p style={{ color:"var(--text-muted)", fontSize: 13 }}>No jobs awaiting follow up.</p> : followJobs.map((j, i) => {
             const days = j.followUpSince ? daysDiff(j.followUpSince, new Date().toISOString().split("T")[0]) : 0;
             return (
-              <div key={j.id} style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12, padding: "8px 12px", background: "#FDF2F8", borderRadius: 8, borderLeft: "3px solid #EC4899" }}>
-                <div style={{ flex: 1 }}>
-                  <div style={{ fontSize: 12, fontWeight: 700, color:"var(--text-primary)" }}>{j.id}</div>
-                  <div style={{ fontSize: 11, color:"var(--text-secondary)", marginTop: 1 }}>{j.title}</div>
+                <div key={j.id} style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12, padding: "8px 12px", background: "#FDF2F8", borderRadius: 8, borderLeft: "3px solid #EC4899" }}>
+                    <div style={{ flex: 1 }}>
+                        <div style={{ fontSize: 12, fontWeight: 700, color: "#831843" }}>{j.id}</div>
+                        <div style={{ fontSize: 11, color: "#9D174D", marginTop: 1 }}>{j.title}</div>
+                    </div>
+                    <div style={{ textAlign: "right" }}>
+                        <div style={{ fontSize: 18, fontWeight: 900, color: "#EC4899" }}>{days}d</div>
+                        <div style={{ fontSize: 10, color: "#9D174D" }}>awaiting</div>
+                    </div>
                 </div>
-                <div style={{ textAlign: "right" }}>
-                  <div style={{ fontSize: 18, fontWeight: 900, color: "#EC4899" }}>{days}d</div>
-                  <div style={{ fontSize: 10, color:"var(--text-muted)" }}>awaiting</div>
-                </div>
-              </div>
             );
           })}
         </div>
@@ -794,8 +850,8 @@ function JobsView({ jobs, staff, customers, settings, setSettings, initialFilter
 
   // ── Sorting ───────────────────────────────────────────────────────────────
   // Defaults to newest job first (by creation date) until the user clicks a column header.
-  const [sortKey, setSortKey] = useState("createdAt");
-  const [sortDir, setSortDir] = useState("desc");
+    const [sortKey, setSortKey] = useState("id");
+    const [sortDir, setSortDir] = useState("desc");
   const handleSort = (key) => {
     if (sortKey === key) setSortDir(d => d === "asc" ? "desc" : "asc");
     else { setSortKey(key); setSortDir("asc"); }
@@ -842,15 +898,20 @@ function JobsView({ jobs, staff, customers, settings, setSettings, initialFilter
         return <span style={{ ...ellipsis, fontWeight:700, color:"var(--text-primary)", fontSize:14 }}>{job.title}</span>;
       case "customer":
         return <span style={{ ...ellipsis, fontSize:13, color:"var(--text-secondary)" }}>{job.client || "—"}</span>;
-      case "assignedStaff": {
-        const assignedStaff = job.assignedTo.map(id => staff.find(s => s.id === id)).filter(Boolean);
-        return (
-          <div style={{ display:"flex", gap:4, overflow:"hidden" }}>
-            {assignedStaff.map(s => <Avatar key={s.id} name={s.name} color={s.color} size={22} />)}
-            {assignedStaff.length === 0 && <span style={{ fontSize:12, color:"var(--border-strong)" }}>—</span>}
-          </div>
-        );
-      }
+        case "assignedStaff": {
+            const assignedStaff = job.assignedTo.map(id => staff.find(s => s.id === id)).filter(Boolean);
+            return (
+                <div style={{ display: "flex", flexDirection: "column", gap: 3, overflow: "hidden" }}>
+                    {assignedStaff.map(s => (
+                        <div key={s.id} style={{ display: "flex", alignItems: "center", gap: 6, overflow: "hidden" }}>
+                            <Avatar name={s.name} color={s.color} size={20} />
+                            <span style={{ fontSize: 12, color: "var(--text-secondary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s.name}</span>
+                        </div>
+                    ))}
+                    {assignedStaff.length === 0 && <span style={{ fontSize: 12, color: "var(--border-strong)" }}>—</span>}
+                </div>
+            );
+        }
       case "status": {
         const sm = STATUS_META[job.status] || { label: job.status, color: "var(--text-muted)" };
         const holdDays = job.holdSince ? daysDiff(job.holdSince, new Date().toISOString().split("T")[0]) : 0;
@@ -1976,7 +2037,8 @@ function POPrintView({ po, job, supplier, company, settings, onClose }) {
       <div className="no-print" style={{ position:"sticky", top:0, background:"#1C2333", padding:"14px 24px", display:"flex", justifyContent:"space-between", alignItems:"center", zIndex:10 }}>
         <span style={{ color:"#fff", fontWeight:700, fontSize:14 }}>Purchase Order {po.poNumber}</span>
         <div style={{ display:"flex", gap:10 }}>
-          <Btn onClick={()=>window.print()}>🖨 Print / Save as PDF</Btn>
+                  <Btn onClick={() => window.print()}>🖨 Print</Btn>
+                  <Btn variant="secondary" onClick={() => downloadElementAsPDF("po-print-area", `${po.poNumber}.pdf`)}>⬇ Save as PDF</Btn>
           <Btn variant="secondary" onClick={onClose}>Close</Btn>
         </div>
       </div>
@@ -2265,12 +2327,49 @@ function SettingsTimesheetsPage({ settings, setSettings }) {
     </div>
   );
 }
+function SettingsDashboardPage({ settings, setSettings, staff }) {
+    const selected = settings.dashboardStaffIds && settings.dashboardStaffIds.length ? settings.dashboardStaffIds : staff.map(s => s.id);
+    const allSelected = selected.length === staff.length;
 
+    const toggleStaffMember = (id) => {
+        setSettings(p => {
+            const current = (p.dashboardStaffIds && p.dashboardStaffIds.length) ? p.dashboardStaffIds : staff.map(s => s.id);
+            const next = current.includes(id) ? current.filter(x => x !== id) : [...current, id];
+            return { ...p, dashboardStaffIds: next };
+        });
+    };
+    const selectAll = () => setSettings(p => ({ ...p, dashboardStaffIds: [] }));
+
+    return (
+        <div>
+            <div style={{ background: "var(--card-bg)", borderRadius: 14, padding: 24, boxShadow: "0 1px 4px #1C233310", maxWidth: 560 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+                    <h2 style={{ fontSize: 15, fontWeight: 800, color: "var(--text-primary)", margin: 0 }}>Workload by Person</h2>
+                    {!allSelected && <button onClick={selectAll} style={{ background: "none", border: "none", color: ACCENT_TEXT, fontSize: 12, fontWeight: 700, cursor: "pointer", textDecoration: "underline" }}>Show All</button>}
+                </div>
+                <p style={{ fontSize: 12, color: "var(--text-muted)", margin: "0 0 16px" }}>Choose which team members appear in the "Workload by Person" section on the Dashboard.</p>
+                <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                    {staff.map(s => (
+                        <div key={s.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "9px 4px", borderBottom: "1px solid var(--border)" }}>
+                            <span style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 13, fontWeight: 600, color: "var(--text-primary)" }}>
+                                <Avatar name={s.name} color={s.color} size={26} />
+                                {s.name}
+                            </span>
+                            <ToggleSwitch on={selected.includes(s.id)} onClick={() => toggleStaffMember(s.id)} />
+                        </div>
+                    ))}
+                    {staff.length === 0 && <div style={{ fontSize: 12, color: "var(--text-muted)" }}>No team members yet.</div>}
+                </div>
+            </div>
+        </div>
+    );
+}
 function SettingsView({ settings, setSettings, jobs, staff, setStaff, roles, setRoles, onImport }) {
   const [page, setPage] = useState("system");
 
   const SETTINGS_TABS = [
-    ["system","System"],
+      ["system", "System"],
+      ["dashboard", "Dashboard"],
     ["jobs","Jobs"],
     ["schedule","Scheduler"],
     ["timesheets","Timesheets"],
@@ -2301,7 +2400,8 @@ function SettingsView({ settings, setSettings, jobs, staff, setStaff, roles, set
         </div>
 
         <div style={{ flex:1, minWidth:0 }}>
-          {page === "system" && <SettingsSystemPage settings={settings} setSettings={setSettings} />}
+                  {page === "system" && <SettingsSystemPage settings={settings} setSettings={setSettings} />}
+                  {page === "dashboard" && <SettingsDashboardPage settings={settings} setSettings={setSettings} staff={staff} />}
           {page === "jobs" && <SettingsJobsPage settings={settings} setSettings={setSettings} jobs={jobs} onImport={onImport} />}
           {page === "schedule" && <SettingsEmptyPage label="Scheduler" />}
           {page === "timesheets" && <SettingsTimesheetsPage settings={settings} setSettings={setSettings} />}
@@ -2853,7 +2953,8 @@ function NotesPrintView({ job, company, onClose }) {
       <div className="no-print" style={{ position:"sticky", top:0, background:"#1C2333", padding:"14px 24px", display:"flex", justifyContent:"space-between", alignItems:"center", zIndex:10 }}>
         <span style={{ color:"#fff", fontWeight:700, fontSize:14 }}>Notes & Photos — {job.id}</span>
         <div style={{ display:"flex", gap:10 }}>
-          <Btn onClick={()=>window.print()}>🖨 Print / Save as PDF</Btn>
+                  <Btn onClick={() => window.print()}>🖨 Print</Btn>
+                  <Btn variant="secondary" onClick={() => downloadElementAsPDF("notes-print-area", `${job.id}-notes.pdf`)}>⬇ Save as PDF</Btn>
           <Btn variant="secondary" onClick={onClose}>Close</Btn>
         </div>
       </div>
@@ -2945,7 +3046,8 @@ function JobSheetPrintView({ job, staff, roles, customers, suppliers, timeEntrie
       <div className="no-print" style={{ position:"sticky", top:0, background:"#1C2333", padding:"14px 24px", display:"flex", justifyContent:"space-between", alignItems:"center", zIndex:10 }}>
         <span style={{ color:"#fff", fontWeight:700, fontSize:14 }}>Job Sheet — {job.id}</span>
         <div style={{ display:"flex", gap:10 }}>
-          <Btn onClick={()=>window.print()}>🖨 Print / Save as PDF</Btn>
+                  <Btn onClick={() => window.print()}>🖨 Print</Btn>
+                  <Btn variant="secondary" onClick={() => downloadElementAsPDF("job-sheet-print-area", `${job.id}-job-sheet.pdf`)}>⬇ Save as PDF</Btn>
           <Btn variant="secondary" onClick={onClose}>Close</Btn>
         </div>
       </div>
@@ -3228,10 +3330,11 @@ function JobNotesPage({ job, setJobs, company, onBack }) {
           <h1 style={{ fontSize:24, fontWeight:900, color:"var(--text-primary)", margin:"0 0 4px" }}>Notes & Photos</h1>
           <p style={{ color:"var(--text-secondary)", fontSize:14, margin:0 }}>{job.id} · {notes.length} note{notes.length!==1?"s":""}</p>
         </div>
-        <div style={{ display:"flex", gap:10 }}>
-          <Btn variant="secondary" onClick={()=>setExporting(true)} disabled={notes.length===0}>⬇ Export Notes</Btn>
-          <Btn onClick={()=>setEditingNote("new")}>+ Add Note</Btn>
-        </div>
+              <div style={{ display: "flex", gap: 10 }}>
+                  <Btn variant="secondary" onClick={() => setExporting(true)} disabled={notes.length === 0}>⬇ Export Notes</Btn>
+                  <Btn variant="secondary" onClick={() => exportPhotosZip(job)} disabled={!notes.some(n => (n.photos || []).length > 0)}>⬇ Download Photos</Btn>
+                  <Btn onClick={() => setEditingNote("new")}>+ Add Note</Btn>
+              </div>
       </div>
 
       {notes.length === 0 ? (
@@ -3960,7 +4063,7 @@ export default function App() {
           </>
         ) : (
           <>
-            {tab==="dashboard" && <Dashboard jobs={jobs} staff={staff} roles={roles} onNavigateStatus={navigateToStatus}/>}
+                          {tab === "dashboard" && <Dashboard jobs={jobs} staff={staff} roles={roles} settings={settings} onNavigateStatus={navigateToStatus} />}
             {tab==="jobs"      && <JobsView key={jobsViewKey} jobs={jobs} staff={staff} customers={customers} settings={settings} setSettings={setSettings} initialFilter={jobsPresetFilter} showCompleted={showCompletedJobs} setShowCompleted={setShowCompletedJobs} onAdd={openNewJob} onEdit={j=>openJob(j.id)} onBack={()=>setTab("dashboard")}/>}
             {tab==="onhold"    && <OnHoldView jobs={jobs} staff={staff} onEdit={j=>openJob(j.id)} onBack={()=>setTab("dashboard")}/>}
             {tab==="followup"  && <FollowUpView jobs={jobs} staff={staff} onEdit={j=>openJob(j.id)} onBack={()=>setTab("dashboard")}/>}
