@@ -342,57 +342,58 @@ function getMonthDays(y, m) {
   });
 }
 function exportCSV(filename, headers, rows) {
-    async function exportPhotosZip(job) {
-        async function downloadElementAsPDF(elementId, filename) {
-            const html2canvas = (await import("html2canvas")).default;
-            const { jsPDF } = await import("jspdf");
-            const el = document.getElementById(elementId);
-            if (!el) return;
-            const canvas = await html2canvas(el, { scale: 2, useCORS: true, backgroundColor: "#ffffff" });
-            const imgData = canvas.toDataURL("image/png");
-            const pdf = new jsPDF({ unit: "mm", format: "a4" });
-            const pageWidth = 210, pageHeight = 297;
-            const imgWidth = pageWidth;
-            const imgHeight = (canvas.height * imgWidth) / canvas.width;
-            let heightLeft = imgHeight;
-            let position = 0;
-            pdf.addImage(imgData, "PNG", 0, position, imgWidth, imgHeight);
-            heightLeft -= pageHeight;
-            while (heightLeft > 0) {
-                position -= pageHeight;
-                pdf.addPage();
-                pdf.addImage(imgData, "PNG", 0, position, imgWidth, imgHeight);
-                heightLeft -= pageHeight;
-            }
-            pdf.save(filename);
-        }
-        const zip = new JSZip();
-        const notes = job.jobNotes || [];
-        let count = 0;
-        for (const note of notes) {
-            for (let i = 0; i < (note.photos || []).length; i++) {
-                const res = await fetch(note.photos[i]);
-                const blob = await res.blob();
-                count++;
-                const safeName = note.name.replace(/[^a-z0-9]/gi, "_").slice(0, 30);
-                zip.file(`${safeName || "photo"}-${i + 1}.jpg`, blob);
-            }
-        }
-        if (count === 0) return false;
-        const content = await zip.generateAsync({ type: "blob" });
-        const url = URL.createObjectURL(content);
-        const a = Object.assign(document.createElement("a"), { href: url, download: `${job.id}-photos.zip` });
-        a.click();
-        URL.revokeObjectURL(url);
-        return true;
-    }
-  const esc = (v) => { const s = String(v ?? ""); return (s.includes(",") || s.includes('"') || s.includes("\n")) ? `"${s.replace(/"/g, '""')}"` : s; };
-  const csv = [headers.map(esc).join(","), ...rows.map(r => r.map(esc).join(","))].join("\n");
-  const url = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
-  const a = Object.assign(document.createElement("a"), { href: url, download: filename });
-  a.click(); URL.revokeObjectURL(url);
+    const esc = (v) => { const s = String(v ?? ""); return (s.includes(",") || s.includes('"') || s.includes("\n")) ? `"${s.replace(/"/g, '""')}"` : s; };
+    const csv = [headers.map(esc).join(","), ...rows.map(r => r.map(esc).join(","))].join("\n");
+    const url = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
+    const a = Object.assign(document.createElement("a"), { href: url, download: filename });
+    a.click(); URL.revokeObjectURL(url);
 }
 
+async function exportPhotosZip(job) {
+    const zip = new JSZip();
+    const notes = job.jobNotes || [];
+    let count = 0;
+    for (const note of notes) {
+        for (let i = 0; i < (note.photos || []).length; i++) {
+            const res = await fetch(note.photos[i]);
+            const blob = await res.blob();
+            count++;
+            const safeName = note.name.replace(/[^a-z0-9]/gi, "_").slice(0, 30);
+            zip.file(`${safeName || "photo"}-${i + 1}.jpg`, blob);
+        }
+    }
+    if (count === 0) return false;
+    const content = await zip.generateAsync({ type: "blob" });
+    const url = URL.createObjectURL(content);
+    const a = Object.assign(document.createElement("a"), { href: url, download: `${job.id}-photos.zip` });
+    a.click();
+    URL.revokeObjectURL(url);
+    return true;
+}
+
+async function downloadElementAsPDF(elementId, filename) {
+    const html2canvas = (await import("html2canvas")).default;
+    const { jsPDF } = await import("jspdf");
+    const el = document.getElementById(elementId);
+    if (!el) return;
+    const canvas = await html2canvas(el, { scale: 2, useCORS: true, backgroundColor: "#ffffff" });
+    const imgData = canvas.toDataURL("image/png");
+    const pdf = new jsPDF({ unit: "mm", format: "a4" });
+    const pageWidth = 210, pageHeight = 297;
+    const imgWidth = pageWidth;
+    const imgHeight = (canvas.height * imgWidth) / canvas.width;
+    let heightLeft = imgHeight;
+    let position = 0;
+    pdf.addImage(imgData, "PNG", 0, position, imgWidth, imgHeight);
+    heightLeft -= pageHeight;
+    while (heightLeft > 0) {
+        position -= pageHeight;
+        pdf.addPage();
+        pdf.addImage(imgData, "PNG", 0, position, imgWidth, imgHeight);
+        heightLeft -= pageHeight;
+    }
+    pdf.save(filename);
+}
 // ─── Tiny UI atoms ────────────────────────────────────────────────────────────
 function Badge({ color, children }) {
   return <span style={{ background: color + "22", color, border: `1px solid ${color}55`, borderRadius: 6, padding: "2px 9px", fontSize: 11, fontWeight: 700, letterSpacing: 0.5, textTransform: "uppercase" }}>{children}</span>;
