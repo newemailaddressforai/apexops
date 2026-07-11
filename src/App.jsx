@@ -904,10 +904,7 @@ function JobsView({ jobs, staff, customers, settings, setSettings, initialFilter
             return (
                 <div style={{ display: "flex", flexDirection: "column", gap: 3, overflow: "hidden" }}>
                     {assignedStaff.map(s => (
-                        <div key={s.id} style={{ display: "flex", alignItems: "center", gap: 6, overflow: "hidden" }}>
-                            <Avatar name={s.name} color={s.color} size={20} />
-                            <span style={{ fontSize: 12, color: "var(--text-secondary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s.name}</span>
-                        </div>
+                        <span key={s.id} style={{ fontSize: 12, fontWeight: 700, color: s.color, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s.name}</span>
                     ))}
                     {assignedStaff.length === 0 && <span style={{ fontSize: 12, color: "var(--border-strong)" }}>—</span>}
                 </div>
@@ -1197,9 +1194,9 @@ function SchedulerView({ jobs, staff, roles }) {
           <p style={{ color:"var(--text-secondary)", fontSize: 14, margin: 0 }}>{weekLabel}</p>
         </div>
         <div style={{ display: "flex", gap: 8 }}>
-          <button onClick={() => setWeekOffset(w=>w-1)} style={{ padding: "8px 16px", border: "1.5px solid var(--border-strong)", borderRadius: 8, background:"var(--card-bg)", cursor: "pointer", fontWeight: 700 }}>← Prev</button>
-          <button onClick={() => setWeekOffset(0)} style={{ padding: "8px 14px", border: "1.5px solid var(--border-strong)", borderRadius: 8, background:"var(--card-bg)", cursor: "pointer", fontSize: 13 }}>Today</button>
-          <button onClick={() => setWeekOffset(w=>w+1)} style={{ padding: "8px 16px", border: "1.5px solid var(--border-strong)", borderRadius: 8, background:"var(--card-bg)", cursor: "pointer", fontWeight: 700 }}>Next →</button>
+                  <button onClick={() => setWeekOffset(w => w - 1)} style={{ padding: "8px 16px", border: "1.5px solid var(--border-strong)", borderRadius: 8, background: "var(--card-bg)", color: "var(--text-primary)", cursor: "pointer", fontWeight: 700 }}>← Prev</button>
+                  <button onClick={() => setWeekOffset(0)} style={{ padding: "8px 14px", border: "1.5px solid var(--border-strong)", borderRadius: 8, background: "var(--card-bg)", color: "var(--text-primary)", cursor: "pointer", fontSize: 13 }}>Today</button>
+                  <button onClick={() => setWeekOffset(w => w + 1)} style={{ padding: "8px 16px", border: "1.5px solid var(--border-strong)", borderRadius: 8, background: "var(--card-bg)", color: "var(--text-primary)", cursor: "pointer", fontWeight: 700 }}>Next →</button>
         </div>
       </div>
 
@@ -1415,9 +1412,9 @@ function TimesheetsView({ jobs, staff, roles, timeEntries, setTimeEntries, setti
         </div>
         <div style={{ display:"flex",gap:8 }}>
           <Btn variant="secondary" onClick={handleExport}>⬇ Export Weekly CSV</Btn>
-          <button onClick={()=>setWeekOffset(w=>w-1)} style={{ padding:"8px 16px",border:"1.5px solid var(--border-strong)",borderRadius:8,background:"var(--card-bg)",cursor:"pointer",fontWeight:700 }}>← Prev</button>
-          <button onClick={()=>setWeekOffset(0)} style={{ padding:"8px 14px",border:"1.5px solid var(--border-strong)",borderRadius:8,background:"var(--card-bg)",cursor:"pointer",fontSize:13 }}>Today</button>
-          <button onClick={()=>setWeekOffset(w=>w+1)} style={{ padding:"8px 16px",border:"1.5px solid var(--border-strong)",borderRadius:8,background:"var(--card-bg)",cursor:"pointer",fontWeight:700 }}>Next →</button>
+                  <button onClick={() => setWeekOffset(w => w - 1)} style={{ padding: "8px 16px", border: "1.5px solid var(--border-strong)", borderRadius: 8, background: "var(--card-bg)", color: "var(--text-primary)", cursor: "pointer", fontWeight: 700 }}>← Prev</button>
+                  <button onClick={() => setWeekOffset(0)} style={{ padding: "8px 14px", border: "1.5px solid var(--border-strong)", borderRadius: 8, background: "var(--card-bg)", color: "var(--text-primary)", cursor: "pointer", fontSize: 13 }}>Today</button>
+                  <button onClick={() => setWeekOffset(w => w + 1)} style={{ padding: "8px 16px", border: "1.5px solid var(--border-strong)", borderRadius: 8, background: "var(--card-bg)", color: "var(--text-primary)", cursor: "pointer", fontWeight: 700 }}>Next →</button>
         </div>
       </div>
 
@@ -3956,12 +3953,18 @@ export default function App() {
   // Job pages: a small navigation stack so every page (Job → Time / Notes / Costs)
   // can have its own "back" button that returns to wherever you came from.
   // [] = not viewing a job; otherwise the last entry is the page currently shown.
-  const [jobPageStack, setJobPageStack] = useState([]);
-  const openJob = (jobId) => setJobPageStack([{ view: "detail", jobId }]);
-  const openNewJob = () => setJobPageStack([{ view: "detail", jobId: null }]);
+    const [jobPageStack, setJobPageStack] = useState([]);
+    const scrollPosRef = useRef(0);
+    const openJob = (jobId) => { scrollPosRef.current = window.scrollY; setJobPageStack([{ view: "detail", jobId }]); };
+    const openNewJob = () => { scrollPosRef.current = window.scrollY; setJobPageStack([{ view: "detail", jobId: null }]); };
   const pushJobSubpage = (view) => setJobPageStack(s => s.length ? [...s, { view, jobId: s[s.length-1].jobId }] : s);
   const popJobPage = () => setJobPageStack(s => s.slice(0, -1));
-  const closeJobArea = () => setJobPageStack([]);
+    const closeJobArea = () => setJobPageStack([]);
+    useEffect(() => {
+        if (jobPageStack.length === 0 && scrollPosRef.current) {
+            requestAnimationFrame(() => window.scrollTo(0, scrollPosRef.current));
+        }
+    }, [jobPageStack.length]);
   const currentJobPage = jobPageStack[jobPageStack.length - 1] || null;
   const currentJob = currentJobPage?.jobId ? jobs.find(j => j.id === currentJobPage.jobId) : null;
 
