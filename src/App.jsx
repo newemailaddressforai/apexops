@@ -1,6 +1,6 @@
 import { useState, useMemo, useRef, useEffect, Fragment } from "react";
 import { supabase } from "./supabaseClient";
-import { useSyncedTable, useSyncedSingleton, useSyncedJobs, fetchAllData, ensureSingletonsExist, staffMap, rolesMap, contactMap, companyMap, settingsMap, timeEntryMap, poMap, assetMap, assetGroupMap } from "./db";
+import { useSyncedTable, useSyncedSingleton, useSyncedJobs, fetchAllData, ensureSingletonsExist, staffMap, rolesMap, contactMap, companyMap, settingsMap, timeEntryMap, poMap, assetMap, assetGroupMap, schedulerDataMap, offsiteTrackerMap } from "./db";
 import logoSidebar from "./assets/logo-sidebar.png";
 import { LoginScreen, FullScreenStatus } from "./AuthScreens";
 import JSZip from "jszip";
@@ -1163,9 +1163,8 @@ function CellPicker({ jobs, onSelect, onClose }) {
   );
 }
 
-function SchedulerView({ jobs, staff, roles }) {
-  const [scheduleData, setScheduleData] = useState({});
-  const [openCell, setOpenCell] = useState(null); // { staffId, dayIdx }
+function SchedulerView({ jobs, staff, roles, scheduleData, setScheduleData }) {
+    const [openCell, setOpenCell] = useState(null); // { staffId, dayIdx }
   const [weekOffset, setWeekOffset] = useState(0);
 
   const weekStart = useMemo(() => { const d2 = new Date(); d2.setDate(d2.getDate() - d2.getDay() + 1 + weekOffset * 7); return d2; }, [weekOffset]);
@@ -1507,13 +1506,10 @@ function TimesheetsView({ jobs, staff, roles, timeEntries, setTimeEntries, setti
 }
 
 // ─── OFFSITE ──────────────────────────────────────────────────────────────────
-function OffsiteView() {
-  const now = new Date();
-  const [year, setYear] = useState(now.getFullYear());
-  const [month, setMonth] = useState(now.getMonth());
-  const [cols, setCols] = useState(DEFAULT_OFFSITE_COLS);
-  const [data, setData] = useState({});
-  const [allocated, setAllocated] = useState({});
+function OffsiteView({ cols, setCols, data, setData, allocated, setAllocated }) {
+    const now = new Date();
+    const [year, setYear] = useState(now.getFullYear());
+    const [month, setMonth] = useState(now.getMonth());
   const [editingCol, setEditingCol] = useState(null);
   const [colDraft, setColDraft] = useState({ label: "", type: "number" });
 
@@ -3891,7 +3887,15 @@ export default function App() {
     const [purchaseOrders, setPurchaseOrders, setPurchaseOrdersSilently] = useSyncedTable("purchase_orders", poMap, showSyncError);
     const [company, setCompany, setCompanySilently] = useSyncedSingleton("company", companyMap, INITIAL_COMPANY, showSyncError);
     const [settings, setSettings, setSettingsSilently] = useSyncedSingleton("settings", settingsMap, INITIAL_SETTINGS, showSyncError);
+    const [schedulerDataObj, setSchedulerDataObj, setSchedulerDataObjSilently] = useSyncedSingleton("scheduler_data", schedulerDataMap, { scheduleData: {} }, showSyncError);
+    const [offsiteTracker, setOffsiteTracker, setOffsiteTrackerSilently] = useSyncedSingleton("offsite_tracker", offsiteTrackerMap, { cols: DEFAULT_OFFSITE_COLS, data: {}, allocated: {} }, showSyncError);
 
+    const setScheduleData = (updater) => {
+        setSchedulerDataObj(prev => ({ ...prev, scheduleData: typeof updater === "function" ? updater(prev.scheduleData) : updater }));
+    };
+    const setOffsiteCols = (updater) => setOffsiteTracker(prev => ({ ...prev, cols: typeof updater === "function" ? updater(prev.cols) : updater }));
+    const setOffsiteData = (updater) => setOffsiteTracker(prev => ({ ...prev, data: typeof updater === "function" ? updater(prev.data) : updater }));
+    const setOffsiteAllocated = (updater) => setOffsiteTracker(prev => ({ ...prev, allocated: typeof updater === "function" ? updater(prev.allocated) : updater }));
     const [toast, setToast] = useState(null);
     const [jobsPresetFilter, setJobsPresetFilter] = useState("all");
     const [jobsViewKey, setJobsViewKey] = useState(0);
@@ -3919,7 +3923,7 @@ export default function App() {
         setDataError(null);
         (async () => {
             try {
-                await ensureSingletonsExist(INITIAL_COMPANY, INITIAL_SETTINGS);
+                await ensureSingletonsExist(INITIAL_COMPANY, INITIAL_SETTINGS, { scheduleData: {} }, { cols: DEFAULT_OFFSITE_COLS, data: {}, allocated: {} });
                 const data = await fetchAllData();
                 if (cancelled) return;
                 setStaffSilently(data.staff);
@@ -3933,6 +3937,8 @@ export default function App() {
                 setJobsSilently(data.jobs);
                 if (data.company) setCompanySilently(data.company);
                 if (data.settings) setSettingsSilently(data.settings);
+                if (data.schedulerData) setSchedulerDataObjSilently(data.schedulerData);
+                if (data.offsiteTracker) setOffsiteTrackerSilently(data.offsiteTracker);
             } catch (err) {
                 if (!cancelled) setDataError(err.message || "Something went wrong loading your data.");
             } finally {
@@ -4071,13 +4077,13 @@ export default function App() {
             {tab==="jobs"      && <JobsView key={jobsViewKey} jobs={jobs} staff={staff} customers={customers} settings={settings} setSettings={setSettings} initialFilter={jobsPresetFilter} showCompleted={showCompletedJobs} setShowCompleted={setShowCompletedJobs} onAdd={openNewJob} onEdit={j=>openJob(j.id)} onBack={()=>setTab("dashboard")}/>}
             {tab==="onhold"    && <OnHoldView jobs={jobs} staff={staff} onEdit={j=>openJob(j.id)} onBack={()=>setTab("dashboard")}/>}
             {tab==="followup"  && <FollowUpView jobs={jobs} staff={staff} onEdit={j=>openJob(j.id)} onBack={()=>setTab("dashboard")}/>}
-            {tab==="schedule"  && <SchedulerView jobs={jobs} staff={staff} roles={roles}/>}
+                          {tab === "schedule" && <SchedulerView jobs={jobs} staff={staff} roles={roles} scheduleData={schedulerDataObj.scheduleData} setScheduleData={setScheduleData} />}
             {tab==="timesheets"&& <TimesheetsView jobs={jobs} staff={staff} roles={roles} timeEntries={timeEntries} setTimeEntries={setTimeEntries} settings={settings}/>}
             {tab==="purchaseorders" && <PurchaseOrdersView jobs={jobs} staff={staff} customers={customers} suppliers={suppliers} purchaseOrders={purchaseOrders} setPurchaseOrders={setPurchaseOrders} company={company} settings={settings} onOpenJob={j=>openJob(j.id)}/>}
             {tab==="quotes"    && <ComingSoonView title="Quotes" description="Send customers a priced quote before the work begins." icon="▧"/>}
             {tab==="invoices"  && <ComingSoonView title="Invoices" description="Bill customers for completed work using charge-out rates." icon="▥"/>}
             {tab==="bills"     && <ComingSoonView title="Bills" description="Track what you owe suppliers for purchase orders and materials." icon="▨"/>}
-            {tab==="offsite"   && <OffsiteView/>}
+                          {tab === "offsite" && <OffsiteView cols={offsiteTracker.cols} setCols={setOffsiteCols} data={offsiteTracker.data} setData={setOffsiteData} allocated={offsiteTracker.allocated} setAllocated={setOffsiteAllocated} />}
             {tab==="assets"    && <AssetsView assets={assets} setAssets={setAssets} groups={assetGroups} setGroups={setAssetGroups} staff={staff} settings={settings} setSettings={setSettings}/>}
             {tab==="contacts"  && <ContactsView customers={customers} setCustomers={setCustomers} suppliers={suppliers} setSuppliers={setSuppliers} company={company} setCompany={setCompany}/>}
             {tab==="settings"  && <SettingsView settings={settings} setSettings={setSettings} jobs={jobs} staff={staff} setStaff={setStaff} roles={roles} setRoles={setRoles} onImport={importJobs}/>}

@@ -3,7 +3,15 @@ import { supabase } from "./supabaseClient";
 
 // ─── FIELD MAPPERS (JS camelCase <-> SQL snake_case) ──────────────────────────
 // Each entity has toRow (JS object -> DB row) and fromRow (DB row -> JS object).
+const schedulerDataMap = {
+    toRow: (s) => ({ id: "main", schedule_data: s.scheduleData || {} }),
+    fromRow: (r) => ({ scheduleData: r.schedule_data || {} }),
+};
 
+const offsiteTrackerMap = {
+    toRow: (o) => ({ id: "main", cols: o.cols || [], data: o.data || {}, allocated: o.allocated || {} }),
+    fromRow: (r) => ({ cols: r.cols || [], data: r.data || {}, allocated: r.allocated || {} }),
+};
 const staffMap = {
   toRow: (s) => ({ id: s.id, name: s.name, role_id: s.roleId || null, color: s.color }),
   fromRow: (r) => ({ id: r.id, name: r.name, roleId: r.role_id, color: r.color }),
@@ -234,24 +242,27 @@ export function useSyncedJobs(onError) {
 
 // ─── INITIAL LOAD: fetch everything from Supabase in one go ───────────────────
 export async function fetchAllData() {
-  const [
-    staffRes, rolesRes, customersRes, suppliersRes, companyRes, settingsRes,
-    jobsRes, jobNotesRes, jobCostsRes, timeEntriesRes, poRes, assetsRes, assetGroupsRes,
-  ] = await Promise.all([
-    supabase.from("staff").select("*"),
-    supabase.from("roles").select("*"),
-    supabase.from("customers").select("*"),
-    supabase.from("suppliers").select("*"),
-    supabase.from("company").select("*").eq("id", "main").maybeSingle(),
-    supabase.from("settings").select("*").eq("id", "main").maybeSingle(),
-    supabase.from("jobs").select("*"),
-    supabase.from("job_notes").select("*"),
-    supabase.from("job_costs").select("*"),
-    supabase.from("time_entries").select("*"),
-    supabase.from("purchase_orders").select("*"),
-    supabase.from("assets").select("*"),
-    supabase.from("asset_groups").select("*"),
-  ]);
+    const [
+        staffRes, rolesRes, customersRes, suppliersRes, companyRes, settingsRes,
+        jobsRes, jobNotesRes, jobCostsRes, timeEntriesRes, poRes, assetsRes, assetGroupsRes,
+        schedulerRes, offsiteRes,
+    ] = await Promise.all([
+        supabase.from("staff").select("*"),
+        supabase.from("roles").select("*"),
+        supabase.from("customers").select("*"),
+        supabase.from("suppliers").select("*"),
+        supabase.from("company").select("*").eq("id", "main").maybeSingle(),
+        supabase.from("settings").select("*").eq("id", "main").maybeSingle(),
+        supabase.from("jobs").select("*"),
+        supabase.from("job_notes").select("*"),
+        supabase.from("job_costs").select("*"),
+        supabase.from("time_entries").select("*"),
+        supabase.from("purchase_orders").select("*"),
+        supabase.from("assets").select("*"),
+        supabase.from("asset_groups").select("*"),
+        supabase.from("scheduler_data").select("*").eq("id", "main").maybeSingle(),
+        supabase.from("offsite_tracker").select("*").eq("id", "main").maybeSingle(),
+    ]);
 
   const firstError = [staffRes, rolesRes, customersRes, suppliersRes, jobsRes, jobNotesRes, jobCostsRes, timeEntriesRes, poRes, assetsRes, assetGroupsRes].find(r => r.error);
   if (firstError?.error) throw firstError.error;
@@ -278,18 +289,26 @@ export async function fetchAllData() {
     jobs,
     timeEntries: (timeEntriesRes.data || []).map(timeEntryMap.fromRow),
     purchaseOrders: (poRes.data || []).map(poMap.fromRow),
-    assets: (assetsRes.data || []).map(assetMap.fromRow),
-    assetGroups: (assetGroupsRes.data || []).map(assetGroupMap.fromRow),
-  };
+        assets: (assetsRes.data || []).map(assetMap.fromRow),
+        assetGroups: (assetGroupsRes.data || []).map(assetGroupMap.fromRow),
+        schedulerData: schedulerRes.data ? schedulerDataMap.fromRow(schedulerRes.data) : null,
+        offsiteTracker: offsiteRes.data ? offsiteTrackerMap.fromRow(offsiteRes.data) : null,
+    };
 }
 
 // Seeds the company/settings singleton rows on first-ever run (fresh database).
-export async function ensureSingletonsExist(defaultCompany, defaultSettings) {
-  const { data: existingCompany } = await supabase.from("company").select("id").eq("id", "main").maybeSingle();
-  if (!existingCompany) await supabase.from("company").insert(companyMap.toRow(defaultCompany));
+export async function ensureSingletonsExist(defaultCompany, defaultSettings, defaultSchedulerData, defaultOffsiteTracker) {
+    const { data: existingCompany } = await supabase.from("company").select("id").eq("id", "main").maybeSingle();
+    if (!existingCompany) await supabase.from("company").insert(companyMap.toRow(defaultCompany));
 
-  const { data: existingSettings } = await supabase.from("settings").select("id").eq("id", "main").maybeSingle();
-  if (!existingSettings) await supabase.from("settings").insert(settingsMap.toRow(defaultSettings));
+    const { data: existingSettings } = await supabase.from("settings").select("id").eq("id", "main").maybeSingle();
+    if (!existingSettings) await supabase.from("settings").insert(settingsMap.toRow(defaultSettings));
+
+    const { data: existingScheduler } = await supabase.from("scheduler_data").select("id").eq("id", "main").maybeSingle();
+    if (!existingScheduler) await supabase.from("scheduler_data").insert(schedulerDataMap.toRow(defaultSchedulerData));
+
+    const { data: existingOffsite } = await supabase.from("offsite_tracker").select("id").eq("id", "main").maybeSingle();
+    if (!existingOffsite) await supabase.from("offsite_tracker").insert(offsiteTrackerMap.toRow(defaultOffsiteTracker));
 }
 
-export { staffMap, rolesMap, contactMap, companyMap, settingsMap, timeEntryMap, poMap, assetMap, assetGroupMap, jobCoreMap, jobNoteMap, jobCostMap };
+export { staffMap, rolesMap, contactMap, companyMap, settingsMap, timeEntryMap, poMap, assetMap, assetGroupMap, jobCoreMap, jobNoteMap, jobCostMap, schedulerDataMap, offsiteTrackerMap };
