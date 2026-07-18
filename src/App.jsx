@@ -452,19 +452,19 @@ function Btn({ children, variant = "primary", ...props }) {
 
 // ─── DASHBOARD ────────────────────────────────────────────────────────────────
 function Dashboard({ jobs, staff, roles, settings, onNavigateStatus }) {
-    const total = jobs.length;
-    const inProg = jobs.filter(j => j.status === "in-progress").length;
-    const onHold = jobs.filter(j => j.status === "on-hold").length;
-    const followUp = jobs.filter(j => j.status === "follow-up").length;
-    const readyToAssemble = jobs.filter(j => j.status === "ready-to-assemble").length;
-    const completed = jobs.filter(j => j.status === "completed").length;
-    const notStarted = jobs.filter(j => j.status === "not-started").length;
+    const activeJobs = jobs.filter(j => j.status !== "completed");
+    const total = activeJobs.length;
+    const inProg = activeJobs.filter(j => j.status === "in-progress").length;
+    const onHold = activeJobs.filter(j => j.status === "on-hold").length;
+    const followUp = activeJobs.filter(j => j.status === "follow-up").length;
+    const readyToAssemble = activeJobs.filter(j => j.status === "ready-to-assemble").length;
+    const notStarted = activeJobs.filter(j => j.status === "not-started").length;
     const today2 = new Date().toISOString().split("T")[0];
-    const holdJobs = jobs.filter(j => j.status === "on-hold")
+    const holdJobs = activeJobs.filter(j => j.status === "on-hold")
         .slice()
         .sort((a, b) => (b.holdSince ? daysDiff(b.holdSince, today2) : 0) - (a.holdSince ? daysDiff(a.holdSince, today2) : 0))
         .slice(0, 5);
-    const followJobs = jobs.filter(j => j.status === "follow-up")
+    const followJobs = activeJobs.filter(j => j.status === "follow-up")
         .slice()
         .sort((a, b) => (b.followUpSince ? daysDiff(b.followUpSince, today2) : 0) - (a.followUpSince ? daysDiff(a.followUpSince, today2) : 0))
         .slice(0, 5);
@@ -472,9 +472,9 @@ function Dashboard({ jobs, staff, roles, settings, onNavigateStatus }) {
         ? staff.filter(s => settings.dashboardStaffIds.includes(s.id))
         : staff;
     const personStats = dashboardStaff.map(s => {
-    const mine = jobs.filter(j => j.assignedTo.includes(s.id));
-    return { ...s, inProg: mine.filter(j => j.status === "in-progress").length, onHold: mine.filter(j => j.status === "on-hold").length, followUp: mine.filter(j => j.status === "follow-up").length, readyToAssemble: mine.filter(j => j.status === "ready-to-assemble").length, completed: mine.filter(j => j.status === "completed").length, total: mine.length };
-  });
+        const mine = activeJobs.filter(j => j.assignedTo.includes(s.id));
+        return { ...s, inProg: mine.filter(j => j.status === "in-progress").length, onHold: mine.filter(j => j.status === "on-hold").length, followUp: mine.filter(j => j.status === "follow-up").length, readyToAssemble: mine.filter(j => j.status === "ready-to-assemble").length, completed: 0, total: mine.length };
+    });
   const barMax = Math.max(...personStats.map(p => p.total), 1);
   return (
     <div>
@@ -492,8 +492,8 @@ function Dashboard({ jobs, staff, roles, settings, onNavigateStatus }) {
           <div className="dashboard-summary-grid" style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 20, marginBottom: 20 }}>
         <div style={{ background:"var(--card-bg)", borderRadius: 14, padding: 24, boxShadow: "0 1px 4px #1C233310" }}>
           <h3 style={{ margin: "0 0 20px", fontSize: 13, fontWeight: 800, color:"var(--text-primary)", textTransform: "uppercase", letterSpacing: 0.5 }}>Status Breakdown</h3>
-          {Object.entries(STATUS_META).map(([key, { label, color }]) => {
-            const count = jobs.filter(j => j.status === key).length;
+                  {Object.entries(STATUS_META).filter(([key]) => key !== "completed").map(([key, { label, color }]) => {
+                      const count = activeJobs.filter(j => j.status === key).length;
             return (
               <div key={key} onClick={()=>onNavigateStatus(key)} style={{ marginBottom: 14, cursor:"pointer" }}>
                 <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 5 }}>
