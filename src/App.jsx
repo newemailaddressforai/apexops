@@ -796,9 +796,8 @@ function JobImportModal({ onImport, onClose }) {
   );
 }
 
-function JobsView({ jobs, staff, customers, settings, setSettings, initialFilter, showCompleted, setShowCompleted, onAdd, onEdit, onBack }) {
-  const [filter, setFilter] = useState(initialFilter || "all");
-  const [search, setSearch] = useState("");
+function JobsView({ jobs, staff, customers, settings, setSettings, initialFilter, showCompleted, setShowCompleted, sortKey, setSortKey, sortDir, setSortDir, search, setSearch, onAdd, onEdit, onBack }) {
+    const [filter, setFilter] = useState(initialFilter || "all");
   const dragRef = useRef(null); // { key, startX, startWidth, currentWidth }
   const [, forceTick] = useState(0);
 
@@ -855,8 +854,6 @@ function JobsView({ jobs, staff, customers, settings, setSettings, initialFilter
 
   // ── Sorting ───────────────────────────────────────────────────────────────
   // Defaults to newest job first (by creation date) until the user clicks a column header.
-    const [sortKey, setSortKey] = useState("id");
-    const [sortDir, setSortDir] = useState("desc");
   const handleSort = (key) => {
     if (sortKey === key) setSortDir(d => d === "asc" ? "desc" : "asc");
     else { setSortKey(key); setSortDir("asc"); }
@@ -3953,6 +3950,9 @@ export default function App() {
     const [jobsPresetFilter, setJobsPresetFilter] = useState("all");
     const [jobsViewKey, setJobsViewKey] = useState(0);
     const [showCompletedJobs, setShowCompletedJobs] = useState(false);
+    const [jobsSortKey, setJobsSortKey] = useState("id");
+    const [jobsSortDir, setJobsSortDir] = useState("desc");
+    const [jobsSearch, setJobsSearch] = useState("");
     const [isMobile, setIsMobile] = useState(() => window.innerWidth < 768);
     const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
     useEffect(() => {
@@ -4020,10 +4020,12 @@ export default function App() {
   const popJobPage = () => setJobPageStack(s => s.slice(0, -1));
     const closeJobArea = () => setJobPageStack([]);
     useEffect(() => {
-        if (jobPageStack.length === 0 && scrollPosRef.current) {
-            requestAnimationFrame(() => window.scrollTo(0, scrollPosRef.current));
+        if (jobPageStack.length === 0) {
+            if (scrollPosRef.current) requestAnimationFrame(() => window.scrollTo(0, scrollPosRef.current));
+        } else {
+            window.scrollTo(0, 0);
         }
-    }, [jobPageStack.length]);
+    }, [jobPageStack]);
   const currentJobPage = jobPageStack[jobPageStack.length - 1] || null;
   const currentJob = currentJobPage?.jobId ? jobs.find(j => j.id === currentJobPage.jobId) : null;
 
@@ -4048,14 +4050,17 @@ export default function App() {
   // Dashboard stat cards jump straight to the filtered job list for that status —
   // On Hold and Follow Up keep their own dedicated detail pages (hold reason / follow-up
   // note); everything else, including Completed, goes to the Jobs table pre-filtered.
-  const navigateToStatus = (status) => {
-    if (status === "on-hold") { setTab("onhold"); return; }
-    if (status === "follow-up") { setTab("followup"); return; }
-    if (status === "completed") setShowCompletedJobs(true);
-    setJobsPresetFilter(status);
-    setJobsViewKey(k => k + 1);
-    setTab("jobs");
-  };
+    const navigateToStatus = (status) => {
+        if (status === "on-hold") { setTab("onhold"); return; }
+        if (status === "follow-up") { setTab("followup"); return; }
+        if (status === "completed") setShowCompletedJobs(true);
+        setJobsPresetFilter(status);
+        setJobsSortKey("id");
+        setJobsSortDir("desc");
+        setJobsSearch("");
+        setJobsViewKey(k => k + 1);
+        setTab("jobs");
+    };
     if (session === undefined) return <FullScreenStatus message="Loading ApexOps…" />;
     if (!session) return <LoginScreen />;
     if (dataLoading) return <FullScreenStatus message="Loading your data…" />;
@@ -4070,7 +4075,7 @@ export default function App() {
                   </div>
                   <nav style={{ flex: 1, padding: "8px 12px", overflowY: "auto" }}>
                       {getOrderedNavItems(settings).filter(item => settings.visibleTabs[item.id] !== false).map(item => (
-                          <button key={item.id} onClick={() => { closeJobArea(); if (item.id === "jobs") { setJobsPresetFilter("all"); setJobsViewKey(k => k + 1); } setTab(item.id); }}
+                          <button key={item.id} onClick={() => { closeJobArea(); if (item.id === "jobs") { setJobsPresetFilter("all"); setJobsSortKey("id"); setJobsSortDir("desc"); setJobsSearch(""); setJobsViewKey(k => k + 1); } setTab(item.id); }}
                               style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", padding: "11px 14px", borderRadius: 9, border: "none", background: tab === item.id ? ACCENT : "transparent", color: tab === item.id ? INK : SIDEBAR_MUTED, fontWeight: tab === item.id ? 700 : 500, fontSize: 14, cursor: "pointer", marginBottom: 2, textAlign: "left" }}>
                               <span style={{ fontSize: 15 }}>{item.icon}</span>
                               {item.label}
@@ -4127,7 +4132,7 @@ export default function App() {
         ) : (
           <>
                           {tab === "dashboard" && <Dashboard jobs={jobs} staff={staff} roles={roles} settings={settings} onNavigateStatus={navigateToStatus} />}
-            {tab==="jobs"      && <JobsView key={jobsViewKey} jobs={jobs} staff={staff} customers={customers} settings={settings} setSettings={setSettings} initialFilter={jobsPresetFilter} showCompleted={showCompletedJobs} setShowCompleted={setShowCompletedJobs} onAdd={openNewJob} onEdit={j=>openJob(j.id)} onBack={()=>setTab("dashboard")}/>}
+                          {tab === "jobs" && <JobsView key={jobsViewKey} jobs={jobs} staff={staff} customers={customers} settings={settings} setSettings={setSettings} initialFilter={jobsPresetFilter} showCompleted={showCompletedJobs} setShowCompleted={setShowCompletedJobs} sortKey={jobsSortKey} setSortKey={setJobsSortKey} sortDir={jobsSortDir} setSortDir={setJobsSortDir} search={jobsSearch} setSearch={setJobsSearch} onAdd={openNewJob} onEdit={j => openJob(j.id)} onBack={() => setTab("dashboard")} />}
             {tab==="onhold"    && <OnHoldView jobs={jobs} staff={staff} onEdit={j=>openJob(j.id)} onBack={()=>setTab("dashboard")}/>}
             {tab==="followup"  && <FollowUpView jobs={jobs} staff={staff} onEdit={j=>openJob(j.id)} onBack={()=>setTab("dashboard")}/>}
                           {tab === "schedule" && <SchedulerView jobs={jobs} staff={staff} roles={roles} scheduleData={schedulerDataObj.scheduleData} setScheduleData={setScheduleData} />}
