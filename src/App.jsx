@@ -1176,12 +1176,12 @@ function SchedulerView({ jobs, staff, roles, scheduleData, setScheduleData }) {
   const setCell = (sId, di, val) => setScheduleData(prev => ({ ...prev, [sId]: { ...(prev[sId]||{}), [weekKey]: { ...(prev[sId]?.[weekKey]||{}), [di]: val } } }));
   const clearCell = (sId, di) => setCell(sId, di, null);
 
-  const getCellStyle = (val) => {
-    if (!val) return null;
-    if (val.startsWith("leave:")) { const lt = LEAVE_TYPES.find(l => l.id===val.replace("leave:","")); return lt ? { bg: lt.bg, color: lt.color, label: lt.label } : null; }
-    if (val.startsWith("job:")) { const j = jobs.find(j => j.id===val.replace("job:","")); const sm = STATUS_META[j?.status]||{color:ACCENT_TEXT}; return { bg: sm.color+"22", color: sm.color, label: val.replace("job:","") }; }
-    return null;
-  };
+    const getCellStyle = (val) => {
+        if (!val) return null;
+        if (val.startsWith("leave:")) { const lt = LEAVE_TYPES.find(l => l.id === val.replace("leave:", "")); return lt ? { bg: lt.bg, color: lt.color, label: lt.label } : null; }
+        if (val.startsWith("job:")) { const j = jobs.find(j => j.id === val.replace("job:", "")); const sm = STATUS_META[j?.status] || { color: ACCENT_TEXT }; return { bg: sm.color + "22", color: sm.color, label: val.replace("job:", ""), sublabel: j?.title || "" }; }
+        return null;
+    };
 
   const isOpen = (sId, di) => openCell?.staffId===sId && openCell?.dayIdx===di;
 
@@ -1231,13 +1231,16 @@ function SchedulerView({ jobs, staff, roles, scheduleData, setScheduleData }) {
                   const cellBg = cs?.bg || (weekend ? (si%2===0?"var(--bg-subtle2)":"#EFF1F4") : (si%2===0?"var(--bg-subtle)":"var(--card-bg)"));
                   return (
                     <td key={idx} style={{ borderLeft: "1.5px solid var(--border)", background: cellBg, height: 66, verticalAlign: "middle", padding: 6, position: "relative" }}>
-                      {cs ? (
-                        <div style={{ background: cs.bg, border: `1.5px solid ${cs.color}55`, borderLeft: `3px solid ${cs.color}`, borderRadius: 7, padding: "5px 8px", display: "flex", alignItems: "center", justifyContent: "space-between", cursor: "pointer" }}
-                          onClick={e => { e.stopPropagation(); clearCell(s.id, idx); }}>
-                          <span style={{ fontSize: 12, fontWeight: 700, color: cs.color, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 90 }}>{cs.label}</span>
-                          <span style={{ fontSize: 15, color: cs.color+"88", lineHeight: 1, marginLeft: 4, flexShrink: 0 }}>×</span>
-                        </div>
-                      ) : (
+                          {cs ? (
+                              <div style={{ background: cs.bg, border: `1.5px solid ${cs.color}55`, borderLeft: `3px solid ${cs.color}`, borderRadius: 7, padding: "5px 8px", display: "flex", alignItems: "center", justifyContent: "space-between", cursor: "pointer", gap: 4 }}
+                                  onClick={e => { e.stopPropagation(); clearCell(s.id, idx); }}>
+                                  <div style={{ overflow: "hidden", flex: 1 }}>
+                                      <div style={{ fontSize: 12, fontWeight: 700, color: cs.color, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{cs.label}</div>
+                                      {cs.sublabel && <div style={{ fontSize: 10, color: cs.color + "CC", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", marginTop: 1 }}>{cs.sublabel}</div>}
+                                  </div>
+                                  <span style={{ fontSize: 15, color: cs.color + "88", lineHeight: 1, flexShrink: 0 }}>×</span>
+                              </div>
+                          ) : (
                         <div onClick={e => { e.stopPropagation(); setOpenCell(open ? null : { staffId: s.id, dayIdx: idx }); }}
                           style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", borderRadius: 7, border: "1.5px dashed var(--border)", transition: "border-color .15s, background .15s" }}
                           onMouseEnter={e => { e.currentTarget.style.borderColor=ACCENT; e.currentTarget.style.background=ACCENT_SOFT; }}
@@ -2851,8 +2854,9 @@ function PurchaseOrdersView({ jobs, staff, customers, suppliers, purchaseOrders,
   const [search, setSearch] = useState("");
   const [pickingJob, setPickingJob] = useState(false);
   const [creatingForJob, setCreatingForJob] = useState(null);
-  const [printingPO, setPrintingPO] = useState(null);
-  const [billingPO, setBillingPO] = useState(null);
+    const [printingPO, setPrintingPO] = useState(null);
+    const [billingPO, setBillingPO] = useState(null);
+    const [deletingPO, setDeletingPO] = useState(null);
 
   const rows = purchaseOrders
     .map(po => ({ po, job: jobs.find(j=>j.id===po.jobId), supplier: suppliers.find(s=>s.id===po.supplierId) }))
@@ -2865,7 +2869,7 @@ function PurchaseOrdersView({ jobs, staff, customers, suppliers, purchaseOrders,
 
   const addPO = (po) => { setPurchaseOrders(prev=>[...prev, po]); setCreatingForJob(null); };
   const updatePO = (updated) => { setPurchaseOrders(prev=>prev.map(p=>p.id===updated.id?updated:p)); setBillingPO(null); };
-
+  const deletePO = (poId) => { setPurchaseOrders(prev => prev.filter(p=>p.id!==poId)); setDeletingPO(null); };
   return (
     <div>
       <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:20 }}>
@@ -2898,11 +2902,12 @@ function PurchaseOrdersView({ jobs, staff, customers, suppliers, purchaseOrders,
                 </button>
               ) : <span style={{ fontSize:12, color:"var(--text-muted)" }}>{po.jobId} (deleted)</span>}
             </div>
-            <POStatusBadge po={po} onClick={()=>setBillingPO(po)} />
-            <Btn variant="secondary" onClick={()=>setPrintingPO(po)}>View / Print</Btn>
-          </div>
+                <POStatusBadge po={po} onClick={() => setBillingPO(po)} />
+                <Btn variant="secondary" onClick={() => setPrintingPO(po)}>View / Print</Btn>
+                <Btn variant="danger" onClick={() => setDeletingPO(po)}>Delete</Btn>
+            </div>
         ))}
-        {rows.length===0 && <div style={{ textAlign:"center", color:"var(--text-muted)", padding:40, fontSize:14, background:"var(--card-bg)", borderRadius:12 }}>No purchase orders yet.</div>}
+              {rows.length === 0 && <div style={{ textAlign: "center", color: "var(--text-muted)", padding: 40, fontSize: 14, background: "var(--card-bg)", borderRadius: 12 }}>No purchase orders yet.</div>}
       </div>
 
       {billingPO && (
@@ -2914,11 +2919,23 @@ function PurchaseOrdersView({ jobs, staff, customers, suppliers, purchaseOrders,
       {creatingForJob && (
         <PurchaseOrderModal job={creatingForJob} suppliers={suppliers} purchaseOrders={purchaseOrders} onSave={addPO} onClose={()=>setCreatingForJob(null)} />
       )}
-      {printingPO && (
-        <POPrintView po={printingPO} job={jobs.find(j=>j.id===printingPO.jobId) || { id: printingPO.jobId, title:"(job deleted)" }} supplier={suppliers.find(s=>s.id===printingPO.supplierId)} company={company} settings={settings} onClose={()=>setPrintingPO(null)} />
-      )}
-    </div>
-  );
+            {printingPO && (
+                <POPrintView po={printingPO} job={jobs.find(j => j.id === printingPO.jobId) || { id: printingPO.jobId, title: "(job deleted)" }} supplier={suppliers.find(s => s.id === printingPO.supplierId)} company={company} settings={settings} onClose={() => setPrintingPO(null)} />
+            )}
+            {deletingPO && (
+                <Modal title={`Delete ${deletingPO.poNumber}?`} onClose={() => setDeletingPO(null)}>
+                    <div style={{ background: "#FEF2F2", border: "1.5px solid #FCA5A5", borderRadius: 8, padding: 16 }}>
+                        <div style={{ fontSize: 14, fontWeight: 700, color: "#991B1B", marginBottom: 6 }}>This can't be undone.</div>
+                        <div style={{ fontSize: 13, color: "#7F1D1D", marginBottom: 16 }}>{deletingPO.poNumber} will be permanently deleted{deletingPO.status === "billed" ? ", including its billed cost record" : ""}.</div>
+                        <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
+                            <Btn variant="secondary" onClick={() => setDeletingPO(null)}>Cancel</Btn>
+                            <Btn variant="danger" onClick={() => deletePO(deletingPO.id)}>Yes, Delete</Btn>
+                        </div>
+                    </div>
+                </Modal>
+            )}
+        </div>
+    );
 }
 
 // ─── NOTES EXPORT (PRINT / PDF) ────────────────────────────────────────────────
@@ -3456,15 +3473,17 @@ function AddCostRow({ onAdd, onCancel }) {
 }
 
 function JobCostsPage({ job, suppliers, purchaseOrders, setPurchaseOrders, setJobs, company, settings, onBack }) {
-  const [showPOModal, setShowPOModal] = useState(false);
-  const [printingPO, setPrintingPO] = useState(null);
-  const [billingPO, setBillingPO] = useState(null);
+    const [showPOModal, setShowPOModal] = useState(false);
+    const [printingPO, setPrintingPO] = useState(null);
+    const deletePO = (poId) => { setPurchaseOrders(prev => prev.filter(p => p.id !== poId)); setDeletingPO(null); };
+    const [billingPO, setBillingPO] = useState(null);
+    const [deletingPO, setDeletingPO] = useState(null);
   const [addingCost, setAddingCost] = useState(false);
   const jobPOs = (purchaseOrders||[]).filter(p=>p.jobId===job.id).sort((a,b)=> a.dateCreated<b.dateCreated?1:-1);
   const jobCosts = (job.jobCosts||[]).slice().sort((a,b)=> a.createdAt<b.createdAt?1:-1);
   const addPO = (po) => { setPurchaseOrders(prev=>[...prev, po]); setShowPOModal(false); };
   const updatePO = (updated) => { setPurchaseOrders(prev=>prev.map(p=>p.id===updated.id?updated:p)); setBillingPO(null); };
-  const addCost = (cost) => { setJobs(prev=>prev.map(j=>j.id===job.id?{...j, jobCosts:[...(j.jobCosts||[]), cost]}:j)); setAddingCost(false); };
+    const addCost = (cost) => { setJobs(prev => prev.map(j => j.id === job.id ? { ...j, jobCosts: [...(j.jobCosts || []), cost] } : j)); setAddingCost(false); };
   const removeCost = (costId) => setJobs(prev=>prev.map(j=>j.id===job.id?{...j, jobCosts:(j.jobCosts||[]).filter(c=>c.id!==costId)}:j));
 
   const billedPOTotal = jobPOs.filter(po=>po.status==="billed").reduce((s,po)=>s+(po.billedCost||0),0);
@@ -3504,10 +3523,11 @@ function JobCostsPage({ job, suppliers, purchaseOrders, setPurchaseOrders, setJo
                     <div style={{ fontSize:12, color:"var(--text-secondary)", marginTop:2 }}>{po.reference || po.details.slice(0,70)}</div>
                   </div>
                   <div style={{ fontSize:11, color:"var(--text-muted)" }}>{formatDate(po.dateCreated)}</div>
-                  <POStatusBadge po={po} onClick={()=>setBillingPO(po)} />
-                  <Btn variant="secondary" onClick={()=>setPrintingPO(po)}>View / Print</Btn>
-                </div>
-              );
+                        <POStatusBadge po={po} onClick={() => setBillingPO(po)} />
+                        <Btn variant="secondary" onClick={() => setPrintingPO(po)}>View / Print</Btn>
+                        <Btn variant="danger" onClick={() => setDeletingPO(po)}>Delete</Btn>
+                    </div>
+                );
             })}
             {billedPOTotal > 0 && (
               <div style={{ display:"flex", justifyContent:"flex-end", fontSize:12, color:"var(--text-secondary)", paddingRight:4 }}>
@@ -3552,11 +3572,23 @@ function JobCostsPage({ job, suppliers, purchaseOrders, setPurchaseOrders, setJo
       {showPOModal && (
         <PurchaseOrderModal job={job} suppliers={suppliers} purchaseOrders={purchaseOrders} onSave={addPO} onClose={()=>setShowPOModal(false)} />
       )}
-      {printingPO && (
-        <POPrintView po={printingPO} job={job} supplier={suppliers.find(s=>s.id===printingPO.supplierId)} company={company} settings={settings} onClose={()=>setPrintingPO(null)} />
-      )}
-    </div>
-  );
+            {printingPO && (
+                <POPrintView po={printingPO} job={job} supplier={suppliers.find(s => s.id === printingPO.supplierId)} company={company} settings={settings} onClose={() => setPrintingPO(null)} />
+            )}
+            {deletingPO && (
+                <Modal title={`Delete ${deletingPO.poNumber}?`} onClose={() => setDeletingPO(null)}>
+                    <div style={{ background: "#FEF2F2", border: "1.5px solid #FCA5A5", borderRadius: 8, padding: 16 }}>
+                        <div style={{ fontSize: 14, fontWeight: 700, color: "#991B1B", marginBottom: 6 }}>This can't be undone.</div>
+                        <div style={{ fontSize: 13, color: "#7F1D1D", marginBottom: 16 }}>{deletingPO.poNumber} will be permanently deleted{deletingPO.status === "billed" ? ", including its billed cost record" : ""}.</div>
+                        <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
+                            <Btn variant="secondary" onClick={() => setDeletingPO(null)}>Cancel</Btn>
+                            <Btn variant="danger" onClick={() => deletePO(deletingPO.id)}>Yes, Delete</Btn>
+                        </div>
+                    </div>
+                </Modal>
+            )}
+        </div>
+    );
 }
 
 function JobDetailPage({ job, staff, roles, customers, suppliers, timeEntries, purchaseOrders, setPurchaseOrders, company, settings, onSave, onBack, onDelete, onOpenNotes, onOpenTime, onOpenCosts }) {
