@@ -3929,7 +3929,8 @@ export default function App() {
 
     // ─── Data — each of these now mirrors to Supabase automatically ───────────
     const [jobs, setJobs, setJobsSilently] = useSyncedJobs(showSyncError);
-    const [staff, setStaff, setStaffSilently] = useSyncedTable("staff", staffMap, showSyncError);
+    const [staffRaw, setStaff, setStaffSilently] = useSyncedTable("staff", staffMap, showSyncError);
+    const staff = useMemo(() => [...staffRaw].sort((a, b) => a.name.localeCompare(b.name)), [staffRaw]);
     const [roles, setRoles, setRolesSilently] = useSyncedTable("roles", rolesMap, showSyncError);
     const [assets, setAssets, setAssetsSilently] = useSyncedTable("assets", assetMap, showSyncError);
     const [assetGroups, setAssetGroups, setAssetGroupsSilently] = useSyncedTable("asset_groups", assetGroupMap, showSyncError);
