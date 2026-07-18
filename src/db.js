@@ -48,6 +48,7 @@ const settingsMap = {
         asset_summary_fields: s.assetSummaryFields || [],
         mobile_nav_tabs: s.mobileNavTabs || ["dashboard", "jobs", "assets", "contacts"],
         dashboard_staff_ids: s.dashboardStaffIds || [],
+        dashboard_visible_statuses: s.dashboardVisibleStatuses || {},
   }),
   fromRow: (r) => ({
     theme: r.theme,
@@ -63,6 +64,7 @@ const settingsMap = {
       assetSummaryFields: r.asset_summary_fields || [],
       mobileNavTabs: r.mobile_nav_tabs || ["dashboard", "jobs", "assets", "contacts"],
       dashboardStaffIds: r.dashboard_staff_ids || [],
+      dashboardVisibleStatuses: r.dashboard_visible_statuses || {},
   }),
 };
 

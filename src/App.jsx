@@ -139,6 +139,7 @@ const INITIAL_SETTINGS = {
     weekStartDay: 1, // Timesheets week start: 0=Sunday, 1=Monday ... 6=Saturday
     mobileNavTabs: ["dashboard", "jobs", "assets", "contacts"],
     dashboardStaffIds: [], // empty = show everyone
+    dashboardVisibleStatuses: { "not-started": true, "in-progress": true, "on-hold": true, "follow-up": true, "ready-to-assemble": true, "completed": false },
   visibleTabs: {
     dashboard: true, jobs: true, onhold: true, followup: true,
     schedule: true, timesheets: true, purchaseorders: true, offsite: true, contacts: true,
@@ -309,7 +310,9 @@ const STATUS_META = {
   "ready-to-assemble": { label: "Ready to Assemble", color: "#06B6D4" },
   "completed":   { label: "Completed",    color: "#6366F1" },
 };
-
+const DEFAULT_DASHBOARD_VISIBLE_STATUSES = {
+    "not-started": true, "in-progress": true, "on-hold": true, "follow-up": true, "ready-to-assemble": true, "completed": false,
+};
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 function daysDiff(a, b) { return Math.floor((new Date(b) - new Date(a)) / 86400000); }
 function formatDate(s) { if (!s) return "—"; return new Date(s).toLocaleDateString("en-AU", { day: "2-digit", month: "short", year: "numeric" }); }
@@ -452,7 +455,8 @@ function Btn({ children, variant = "primary", ...props }) {
 
 // ─── DASHBOARD ────────────────────────────────────────────────────────────────
 function Dashboard({ jobs, staff, roles, settings, onNavigateStatus }) {
-    const activeJobs = jobs.filter(j => j.status !== "completed");
+    const visibleStatuses = { ...DEFAULT_DASHBOARD_VISIBLE_STATUSES, ...(settings?.dashboardVisibleStatuses || {}) };
+    const activeJobs = jobs.filter(j => visibleStatuses[j.status] !== false);
     const total = activeJobs.length;
     const inProg = activeJobs.filter(j => j.status === "in-progress").length;
     const onHold = activeJobs.filter(j => j.status === "on-hold").length;
@@ -491,8 +495,8 @@ function Dashboard({ jobs, staff, roles, settings, onNavigateStatus }) {
 
           <div className="dashboard-summary-grid" style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 20, marginBottom: 20 }}>
         <div style={{ background:"var(--card-bg)", borderRadius: 14, padding: 24, boxShadow: "0 1px 4px #1C233310" }}>
-          <h3 style={{ margin: "0 0 20px", fontSize: 13, fontWeight: 800, color:"var(--text-primary)", textTransform: "uppercase", letterSpacing: 0.5 }}>Status Breakdown</h3>
-                  {Object.entries(STATUS_META).filter(([key]) => key !== "completed").map(([key, { label, color }]) => {
+                  <h3 style={{ margin: "0 0 20px", fontSize: 13, fontWeight: 800, color: "var(--text-primary)", textTransform: "uppercase", letterSpacing: 0.5 }}>Status Breakdown</h3>
+                  {Object.entries(STATUS_META).filter(([key]) => visibleStatuses[key] !== false).map(([key, { label, color }]) => {
                       const count = activeJobs.filter(j => j.status === key).length;
             return (
               <div key={key} onClick={()=>onNavigateStatus(key)} style={{ marginBottom: 14, cursor:"pointer" }}>
@@ -2230,7 +2234,19 @@ function SettingsJobsPage({ settings, setSettings, jobs, onImport }) {
       )}
       {editingJobSheet && (
         <JobSheetTemplateModal settings={settings} setSettings={setSettings} onClose={()=>setEditingJobSheet(false)} />
-      )}
+          )}
+          <div style={{ background: "var(--card-bg)", borderRadius: 14, padding: 24, boxShadow: "0 1px 4px #1C233310", maxWidth: 560, marginTop: 20 }}>
+              <h2 style={{ fontSize: 15, fontWeight: 800, color: "var(--text-primary)", margin: "0 0 4px" }}>Status Visibility</h2>
+              <p style={{ fontSize: 12, color: "var(--text-muted)", margin: "0 0 16px" }}>Choose which job statuses count toward the Dashboard's totals, breakdown, and workload. This doesn't affect the Jobs page.</p>
+              <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                  {Object.entries(STATUS_META).map(([key, meta]) => (
+                      <div key={key} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "9px 4px", borderBottom: "1px solid var(--border)" }}>
+                          <span style={{ fontSize: 13, fontWeight: 600, color: "var(--text-primary)" }}>{meta.label}</span>
+                          <ToggleSwitch on={visibleStatuses[key] !== false} onClick={() => toggleStatus(key)} />
+                      </div>
+                  ))}
+              </div>
+          </div>
     </div>
   );
 }
@@ -2327,6 +2343,10 @@ function SettingsTimesheetsPage({ settings, setSettings }) {
 function SettingsDashboardPage({ settings, setSettings, staff }) {
     const selected = settings.dashboardStaffIds && settings.dashboardStaffIds.length ? settings.dashboardStaffIds : staff.map(s => s.id);
     const allSelected = selected.length === staff.length;
+    const visibleStatuses = { ...DEFAULT_DASHBOARD_VISIBLE_STATUSES, ...(settings.dashboardVisibleStatuses || {}) };
+    const toggleStatus = (key) => {
+        setSettings(p => ({ ...p, dashboardVisibleStatuses: { ...visibleStatuses, [key]: !visibleStatuses[key] } }));
+    };
 
     const toggleStaffMember = (id) => {
         setSettings(p => {
