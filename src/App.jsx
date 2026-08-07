@@ -41,7 +41,10 @@ function ThemeStyle() {
         --border: #33373F;
         --border-strong: #3D424B;
       }
-      [data-theme="dark"] input, [data-theme="dark"] select, [data-theme="dark"] textarea {
+      [data-theme="dark"] input, [data-theme="dark"] select, [data-theme="dark"] textarea, input, select, button {
+        font-family: 'Inter', system-ui, sans-serif;
+      }
+      textarea {
         color: var(--text-primary);
       }
       [data-theme="dark"] input::placeholder, [data-theme="dark"] textarea::placeholder {
@@ -140,6 +143,8 @@ const INITIAL_SETTINGS = {
     mobileNavTabs: ["dashboard", "jobs", "assets", "contacts"],
     dashboardStaffIds: [], // empty = show everyone
     dashboardVisibleStatuses: { "not-started": true, "in-progress": true, "on-hold": true, "follow-up": true, "ready-to-assemble": true, "completed": false },
+    schedulerStaffIds: [], // empty = show everyone
+    timesheetsStaffIds: [], // empty = show everyone
   visibleTabs: {
     dashboard: true, jobs: true, onhold: true, followup: true,
     schedule: true, timesheets: true, purchaseorders: true, offsite: true, contacts: true,
@@ -781,7 +786,7 @@ function JobImportModal({ onImport, onClose }) {
               <div style={{ maxHeight: 220, overflowY: "auto", border: "1px solid var(--border)", borderRadius: 8, marginBottom: 16 }}>
                 <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 12 }}>
                   <thead><tr style={{ background: "var(--bg-subtle)" }}>{["Job No","Work Order","Description","Order No","Client","Status"].map(h => <th key={h} style={{ padding: "7px 10px", textAlign: "left", fontWeight: 700, color:"var(--text-secondary)", borderBottom: "1px solid var(--border)", fontSize: 11, textTransform: "uppercase" }}>{h}</th>)}</tr></thead>
-                  <tbody>{importPreview.jobs.map((j,i) => <tr key={i} style={{ borderBottom: "1px solid #F1F4F8" }}><td style={{ padding:"7px 10px",fontFamily:"monospace",color:ACCENT_TEXT,fontWeight:700 }}>{j.id}</td><td style={{ padding:"7px 10px",color:"var(--text-secondary)" }}>{j.workOrderNo||"—"}</td><td style={{ padding:"7px 10px",color:"var(--text-primary)",fontWeight:600 }}>{j.title}</td><td style={{ padding:"7px 10px",color:"var(--text-secondary)" }}>{j.orderNo||"—"}</td><td style={{ padding:"7px 10px",color:"var(--text-secondary)" }}>{j.client||"—"}</td><td style={{ padding:"7px 10px" }}><Badge color={STATUS_META[j.status]?.color||"#9CA3AF"}>{STATUS_META[j.status]?.label||j.status}</Badge></td></tr>)}</tbody>
+                  <tbody>{importPreview.jobs.map((j,i) => <tr key={i} style={{ borderBottom: "1px solid #F1F4F8" }}><td style={{ padding:"7px 10px",color:ACCENT_TEXT,fontWeight:700 }}>{j.id}</td><td style={{ padding:"7px 10px",color:"var(--text-secondary)" }}>{j.workOrderNo||"—"}</td><td style={{ padding:"7px 10px",color:"var(--text-primary)",fontWeight:600 }}>{j.title}</td><td style={{ padding:"7px 10px",color:"var(--text-secondary)" }}>{j.orderNo||"—"}</td><td style={{ padding:"7px 10px",color:"var(--text-secondary)" }}>{j.client||"—"}</td><td style={{ padding:"7px 10px" }}><Badge color={STATUS_META[j.status]?.color||"#9CA3AF"}>{STATUS_META[j.status]?.label||j.status}</Badge></td></tr>)}</tbody>
                 </table>
               </div>
               <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
@@ -891,11 +896,11 @@ function JobsView({ jobs, staff, customers, settings, setSettings, initialFilter
     }
     switch (key) {
       case "id":
-        return <span style={{ ...ellipsis, fontFamily:"monospace", fontSize:12, fontWeight:700, color:ACCENT_TEXT }}>{job.id}</span>;
+        return <span style={{ ...ellipsis, fontSize:12, fontWeight:700, color:ACCENT_TEXT }}>{job.id}</span>;
       case "workOrderNo":
-        return <span style={{ ...ellipsis, fontFamily:"monospace", fontSize:12, color:"var(--text-secondary)" }}>{job.workOrderNo || "—"}</span>;
+        return <span style={{ ...ellipsis, fontSize:12, color:"var(--text-secondary)" }}>{job.workOrderNo || "—"}</span>;
       case "orderNo":
-        return <span style={{ ...ellipsis, fontFamily:"monospace", fontSize:12, color:"var(--text-secondary)" }}>{job.orderNo || "—"}</span>;
+        return <span style={{ ...ellipsis, fontSize:12, color:"var(--text-secondary)" }}>{job.orderNo || "—"}</span>;
       case "description":
         return <span style={{ ...ellipsis, fontWeight:700, color:"var(--text-primary)", fontSize:14 }}>{job.title}</span>;
       case "customer":
@@ -1016,7 +1021,7 @@ function OnHoldView({ jobs, staff, onEdit, onBack }) {
               onMouseLeave={e => e.currentTarget.style.boxShadow="0 1px 4px #1C233310"}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 12 }}>
                 <div>
-                  <span style={{ fontFamily: "monospace", fontSize: 12, color: ACCENT_TEXT, fontWeight: 700 }}>{job.id}</span>
+                  <span style={{ fontSize: 12, color: ACCENT_TEXT, fontWeight: 700 }}>{job.id}</span>
                   <h3 style={{ margin: "4px 0 2px", fontSize: 17, fontWeight: 800, color:"var(--text-primary)" }}>{job.title}</h3>
                   <span style={{ fontSize: 13, color:"var(--text-secondary)" }}>{job.client}</span>
                 </div>
@@ -1065,7 +1070,7 @@ function FollowUpView({ jobs, staff, onEdit, onBack }) {
               onMouseLeave={e => e.currentTarget.style.boxShadow="0 1px 4px #1C233310"}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 12 }}>
                 <div>
-                  <span style={{ fontFamily: "monospace", fontSize: 12, color: ACCENT_TEXT, fontWeight: 700 }}>{job.id}</span>
+                  <span style={{ fontSize: 12, color: ACCENT_TEXT, fontWeight: 700 }}>{job.id}</span>
                   <h3 style={{ margin: "4px 0 2px", fontSize: 17, fontWeight: 800, color:"var(--text-primary)" }}>{job.title}</h3>
                   <span style={{ fontSize: 13, color:"var(--text-secondary)" }}>{job.client}</span>
                 </div>
@@ -1148,7 +1153,7 @@ function CellPicker({ jobs, onSelect, onClose }) {
                   onMouseLeave={e => e.currentTarget.style.background="transparent"}>
                   <span style={{ width: 10, height: 10, borderRadius: 3, background: sm.color, flexShrink: 0 }} />
                   <div>
-                    <div style={{ fontSize: 12, fontWeight: 700, color: ACCENT_TEXT, fontFamily: "monospace" }}>{j.id}</div>
+                    <div style={{ fontSize: 12, fontWeight: 700, color: ACCENT_TEXT }}>{j.id}</div>
                     <div style={{ fontSize: 11, color:"var(--text-secondary)" }}>{j.title}</div>
                   </div>
                 </div>
@@ -1164,7 +1169,8 @@ function CellPicker({ jobs, onSelect, onClose }) {
   );
 }
 
-function SchedulerView({ jobs, staff, roles, scheduleData, setScheduleData }) {
+function SchedulerView({ jobs, staff: allStaff, roles, settings, scheduleData, setScheduleData }) {
+    const staff = (settings?.schedulerStaffIds && settings.schedulerStaffIds.length) ? allStaff.filter(s => settings.schedulerStaffIds.includes(s.id)) : allStaff;
     const [openCell, setOpenCell] = useState(null); // { staffId, dayIdx }
   const [weekOffset, setWeekOffset] = useState(0);
 
@@ -1173,9 +1179,23 @@ function SchedulerView({ jobs, staff, roles, scheduleData, setScheduleData }) {
   const weekLabel = useMemo(() => { const end = new Date(weekStart); end.setDate(end.getDate() + 6); return `${weekStart.toLocaleDateString("en-AU",{day:"numeric",month:"short"})} – ${end.toLocaleDateString("en-AU",{day:"numeric",month:"short",year:"numeric"})}`; }, [weekStart]);
   const weekDays = useMemo(() => TIMESHEET_DAYS.map(({ name, weekend }, i) => { const dt = new Date(weekStart); dt.setDate(dt.getDate()+i); return { name, weekend, date: dt.toLocaleDateString("en-AU",{day:"numeric",month:"short"}), idx: i }; }), [weekStart]);
 
-  const getCell = (sId, di) => scheduleData[sId]?.[weekKey]?.[di] ?? null;
-  const setCell = (sId, di, val) => setScheduleData(prev => ({ ...prev, [sId]: { ...(prev[sId]||{}), [weekKey]: { ...(prev[sId]?.[weekKey]||{}), [di]: val } } }));
-  const clearCell = (sId, di) => setCell(sId, di, null);
+    const getCell = (sId, di) => {
+        const raw = scheduleData[sId]?.[weekKey]?.[di];
+        if (!raw) return [];
+        return Array.isArray(raw) ? raw : [raw];
+    };
+    const addToCell = (sId, di, val) => setScheduleData(prev => {
+        const day = prev[sId]?.[weekKey]?.[di];
+        const current = Array.isArray(day) ? day : (day ? [day] : []);
+        if (current.includes(val)) return prev;
+        return { ...prev, [sId]: { ...(prev[sId] || {}), [weekKey]: { ...(prev[sId]?.[weekKey] || {}), [di]: [...current, val] } } };
+    });
+    const removeFromCell = (sId, di, val) => setScheduleData(prev => {
+        const day = prev[sId]?.[weekKey]?.[di];
+        const current = Array.isArray(day) ? day : (day ? [day] : []);
+        const next = current.filter(v => v !== val);
+        return { ...prev, [sId]: { ...(prev[sId] || {}), [weekKey]: { ...(prev[sId]?.[weekKey] || {}), [di]: next } } };
+    });
 
     const getCellStyle = (val) => {
         if (!val) return null;
@@ -1225,38 +1245,41 @@ function SchedulerView({ jobs, staff, roles, scheduleData, setScheduleData }) {
                     </div>
                   </div>
                 </td>
-                {weekDays.map(({ idx, weekend }) => {
-                  const val = getCell(s.id, idx);
-                  const cs = val ? getCellStyle(val) : null;
-                  const open = isOpen(s.id, idx);
-                  const cellBg = cs?.bg || (weekend ? (si%2===0?"var(--bg-subtle2)":"#EFF1F4") : (si%2===0?"var(--bg-subtle)":"var(--card-bg)"));
-                  return (
-                    <td key={idx} style={{ borderLeft: "1.5px solid var(--border)", background: cellBg, height: 66, verticalAlign: "middle", padding: 6, position: "relative" }}>
-                          {cs ? (
-                              <div style={{ background: cs.bg, border: `1.5px solid ${cs.color}55`, borderLeft: `3px solid ${cs.color}`, borderRadius: 7, padding: "5px 8px", display: "flex", alignItems: "center", justifyContent: "space-between", cursor: "pointer", gap: 4 }}
-                                  onClick={e => { e.stopPropagation(); clearCell(s.id, idx); }}>
-                                  <div style={{ overflow: "hidden", flex: 1 }}>
-                                      <div style={{ fontSize: 12, fontWeight: 700, color: cs.color, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{cs.label}</div>
-                                      {cs.sublabel && <div style={{ fontSize: 10, color: cs.color + "CC", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", marginTop: 1 }}>{cs.sublabel}</div>}
-                                  </div>
-                                  <span style={{ fontSize: 15, color: cs.color + "88", lineHeight: 1, flexShrink: 0 }}>×</span>
-                              </div>
-                          ) : (
-                        <div onClick={e => { e.stopPropagation(); setOpenCell(open ? null : { staffId: s.id, dayIdx: idx }); }}
-                          style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", borderRadius: 7, border: "1.5px dashed var(--border)", transition: "border-color .15s, background .15s" }}
-                          onMouseEnter={e => { e.currentTarget.style.borderColor=ACCENT; e.currentTarget.style.background=ACCENT_SOFT; }}
-                          onMouseLeave={e => { e.currentTarget.style.borderColor="var(--border)"; e.currentTarget.style.background="transparent"; }}>
-                          <span style={{ fontSize: 18, color: "var(--border-strong)" }}>+</span>
-                        </div>
-                      )}
-                      {open && (
-                        <div style={{ position: "absolute", top: "100%", left: 0, zIndex: 500 }} onClick={e => e.stopPropagation()}>
-                          <CellPicker jobs={jobs} onSelect={v => { setCell(s.id, idx, v); setOpenCell(null); }} onClose={() => setOpenCell(null)} />
-                        </div>
-                      )}
-                    </td>
-                  );
-                })}
+                    {weekDays.map(({ idx, weekend }) => {
+                        const entries = getCell(s.id, idx);
+                        const open = isOpen(s.id, idx);
+                        const cellBg = weekend ? (si % 2 === 0 ? "var(--bg-subtle2)" : "#EFF1F4") : (si % 2 === 0 ? "var(--bg-subtle)" : "var(--card-bg)");
+                        return (
+                            <td key={idx} style={{ borderLeft: "1.5px solid var(--border)", background: cellBg, verticalAlign: "top", padding: 6, position: "relative" }}>
+                                <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                                    {entries.map((val, ei) => {
+                                        const cs = getCellStyle(val);
+                                        if (!cs) return null;
+                                        return (
+                                            <div key={ei} style={{ background: cs.bg, border: `1.5px solid ${cs.color}55`, borderLeft: `3px solid ${cs.color}`, borderRadius: 7, padding: "4px 7px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 4 }}>
+                                                <div style={{ overflow: "hidden", flex: 1 }}>
+                                                    <div style={{ fontSize: 11, fontWeight: 700, color: cs.color, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{cs.label}</div>
+                                                    {cs.sublabel && <div style={{ fontSize: 9, color: cs.color + "CC", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{cs.sublabel}</div>}
+                                                </div>
+                                                <span onClick={e => { e.stopPropagation(); removeFromCell(s.id, idx, val); }} style={{ fontSize: 13, color: cs.color + "88", lineHeight: 1, flexShrink: 0, cursor: "pointer" }}>×</span>
+                                            </div>
+                                        );
+                                    })}
+                                    <div onClick={e => { e.stopPropagation(); setOpenCell(open ? null : { staffId: s.id, dayIdx: idx }); }}
+                                        style={{ display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", borderRadius: 7, border: "1.5px dashed var(--border)", padding: entries.length ? "3px 0" : "14px 0", transition: "border-color .15s, background .15s" }}
+                                        onMouseEnter={e => { e.currentTarget.style.borderColor = ACCENT; e.currentTarget.style.background = ACCENT_SOFT; }}
+                                        onMouseLeave={e => { e.currentTarget.style.borderColor = "var(--border)"; e.currentTarget.style.background = "transparent"; }}>
+                                        <span style={{ fontSize: entries.length ? 14 : 18, color: "var(--border-strong)" }}>+</span>
+                                    </div>
+                                </div>
+                                {open && (
+                                    <div style={{ position: "absolute", top: "100%", left: 0, zIndex: 500 }} onClick={e => e.stopPropagation()}>
+                                        <CellPicker jobs={jobs} onSelect={v => { addToCell(s.id, idx, v); setOpenCell(null); }} onClose={() => setOpenCell(null)} />
+                                    </div>
+                                )}
+                            </td>
+                        );
+                    })}
               </tr>
             ))}
           </tbody>
@@ -1318,7 +1341,7 @@ function TimeEntryPicker({ jobs, editingEntry, onSave, onDelete, onClose }) {
                   onMouseLeave={e => e.currentTarget.style.background="transparent"}>
                   <span style={{ width: 10, height: 10, borderRadius: 3, background: sm.color, flexShrink: 0 }} />
                   <div>
-                    <div style={{ fontSize: 12, fontWeight: 700, color: ACCENT_TEXT, fontFamily: "monospace" }}>{j.id}</div>
+                    <div style={{ fontSize: 12, fontWeight: 700, color: ACCENT_TEXT }}>{j.id}</div>
                     <div style={{ fontSize: 11, color:"var(--text-secondary)" }}>{j.title}</div>
                   </div>
                 </div>
@@ -1333,7 +1356,7 @@ function TimeEntryPicker({ jobs, editingEntry, onSave, onDelete, onClose }) {
         <div style={{ padding: 14 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 10, cursor: "pointer" }} onClick={() => setSelectedJob(null)}>
             <span style={{ fontSize: 14, color:"var(--text-muted)" }}>←</span>
-            <span style={{ fontSize: 12, fontWeight: 700, color: ACCENT_TEXT, fontFamily: "monospace" }}>{selectedJob.id}</span>
+            <span style={{ fontSize: 12, fontWeight: 700, color: ACCENT_TEXT }}>{selectedJob.id}</span>
           </div>
           <div style={{ fontSize: 12, color:"var(--text-secondary)", marginBottom: 12 }}>{selectedJob.title}</div>
           <div style={{ display: "flex", gap: 8, marginBottom: 4 }}>
@@ -1364,7 +1387,8 @@ function TimeEntryPicker({ jobs, editingEntry, onSave, onDelete, onClose }) {
   );
 }
 
-function TimesheetsView({ jobs, staff, roles, timeEntries, setTimeEntries, settings }) {
+function TimesheetsView({ jobs, staff: allStaff, roles, timeEntries, setTimeEntries, settings }) {
+    const staff = (settings?.timesheetsStaffIds && settings.timesheetsStaffIds.length) ? allStaff.filter(s => settings.timesheetsStaffIds.includes(s.id)) : allStaff;
   const [weekOffset, setWeekOffset] = useState(0);
   const [openCell, setOpenCell] = useState(null); // { staffId, dayIdx }
   const startDay = settings?.weekStartDay ?? 1;
@@ -1542,7 +1566,7 @@ function OffsiteView({ cols, setCols, data, setData, allocated, setAllocated }) 
     exportCSV(`offsite-${MONTH_NAMES[month]}-${year}.csv`,headers,rows);
   };
   const th={padding:"9px 6px",fontSize:11,fontWeight:700,color:"var(--text-secondary)",background:"var(--bg-subtle)",borderBottom:"2px solid var(--border)",borderRight:"1px solid var(--border)",textAlign:"center",whiteSpace:"nowrap",textTransform:"uppercase",letterSpacing:0.4,userSelect:"none"};
-  const td=(wk)=>({padding:0,borderRight:"1px solid #EEF0F4",borderBottom:"1px solid #EEF0F4",background:wk?"#FAFBFD":"#fff",height:34});
+    const td = (wk) => ({ padding: 0, borderRight: "1px solid var(--border)", borderBottom: "1px solid var(--border)", background: wk ? "var(--bg-subtle2)" : "var(--card-bg)", height: 34 });
   const inp={width:"100%",height:"100%",border:"none",background:"transparent",fontSize:12,textAlign:"center",outline:"none",padding:"0 4px",boxSizing:"border-box",color:"var(--text-primary)"};
   const sumTd={padding:"9px 6px",fontSize:12,fontWeight:700,textAlign:"center",borderRight:"1px solid var(--border-strong)",color:"var(--text-primary)"};
   const fmt=(n)=>n===0?"0":n%1===0?String(n):n.toFixed(1);
@@ -1590,11 +1614,11 @@ function OffsiteView({ cols, setCols, data, setData, allocated, setAllocated }) 
               <tr key={day} style={{ opacity:isWeekend?0.55:1 }}>
                 <td style={{ ...td(isWeekend),paddingLeft:12,fontSize:11,fontWeight:700,color:isWeekend?"#9CA3AF":"#5C6B82",background:isWeekend?"var(--bg-subtle)":"var(--card-bg)" }}>{dayName}</td>
                 <td style={{ ...td(isWeekend),fontSize:12,fontWeight:700,color:"#C4CAD4",textAlign:"center" }}>{day}</td>
-                {cols.map(col=>(
-                  <td key={col.id} style={td(isWeekend)}>
-                    <input type={col.type==="number"?"number":"text"} value={getCell(day,col.id)} onChange={e=>setCell(day,col.id,e.target.value)} style={{ ...inp,color:isWeekend?"#9CA3AF":"#1C2333" }} placeholder={isWeekend?"—":""} min={0}/>
-                  </td>
-                ))}
+                    {cols.map(col => (
+                        <td key={col.id} style={td(isWeekend)}>
+                            <input type={col.type === "number" ? "number" : "text"} value={getCell(day, col.id)} onChange={e => setCell(day, col.id, e.target.value)} style={{ ...inp, color: isWeekend ? "var(--text-muted)" : "var(--text-primary)" }} placeholder={isWeekend ? "—" : ""} min={0} />
+                        </td>
+                    ))}
               </tr>
             ))}
             <tr style={{ background:"var(--bg-subtle2)",borderTop:"2px solid var(--border-strong)" }}>
@@ -2072,7 +2096,7 @@ function POPrintView({ po, job, supplier, company, settings, onClose }) {
           </div>
           <div>
             <div style={{ fontSize:11, fontWeight:700, color:"#9CA3AF", textTransform:"uppercase", letterSpacing:0.5, marginBottom:8 }}>Job Reference</div>
-            <div style={{ fontSize:14, fontWeight:700, fontFamily:"monospace" }}>{job.id}</div>
+            <div style={{ fontSize:14, fontWeight:700 }}>{job.id}</div>
             <div style={{ fontSize:13, color:"#5C6B82", marginTop:3 }}>{job.title}</div>
             {job.client && <div style={{ fontSize:13, color:"#5C6B82", marginTop:3 }}>Client: {job.client}</div>}
             {po.reference && <div style={{ fontSize:13, color:"#5C6B82", marginTop:3 }}>PO Reference: {po.reference}</div>}
@@ -2316,26 +2340,47 @@ function SettingsAssetsPage({ settings, setSettings }) {
     </div>
   );
 }
+function SettingsSchedulerPage({ settings, setSettings, staff }) {
+    const selected = settings.schedulerStaffIds && settings.schedulerStaffIds.length ? settings.schedulerStaffIds : staff.map(s => s.id);
+    const toggle = (id) => {
+        setSettings(p => {
+            const current = (p.schedulerStaffIds && p.schedulerStaffIds.length) ? p.schedulerStaffIds : staff.map(s => s.id);
+            const next = current.includes(id) ? current.filter(x => x !== id) : [...current, id];
+            return { ...p, schedulerStaffIds: next };
+        });
+    };
+    const showAll = () => setSettings(p => ({ ...p, schedulerStaffIds: [] }));
+    return <StaffVisibilityPicker staff={staff} selectedIds={selected} onToggle={toggle} onShowAll={showAll} />;
+}
+function SettingsTimesheetsPage({ settings, setSettings, staff }) {
+    const dayOptions = [
+        { value: 0, label: "Sunday" }, { value: 1, label: "Monday" }, { value: 2, label: "Tuesday" },
+        { value: 3, label: "Wednesday" }, { value: 4, label: "Thursday" }, { value: 5, label: "Friday" }, { value: 6, label: "Saturday" },
+    ];
+    const current = settings.weekStartDay ?? 1;
+    const selected = settings.timesheetsStaffIds && settings.timesheetsStaffIds.length ? settings.timesheetsStaffIds : staff.map(s => s.id);
+    const toggle = (id) => {
+        setSettings(p => {
+            const cur = (p.timesheetsStaffIds && p.timesheetsStaffIds.length) ? p.timesheetsStaffIds : staff.map(s => s.id);
+            const next = cur.includes(id) ? cur.filter(x => x !== id) : [...cur, id];
+            return { ...p, timesheetsStaffIds: next };
+        });
+    };
+    const showAll = () => setSettings(p => ({ ...p, timesheetsStaffIds: [] }));
 
-function SettingsTimesheetsPage({ settings, setSettings }) {
-  const dayOptions = [
-    { value:0, label:"Sunday" }, { value:1, label:"Monday" }, { value:2, label:"Tuesday" },
-    { value:3, label:"Wednesday" }, { value:4, label:"Thursday" }, { value:5, label:"Friday" }, { value:6, label:"Saturday" },
-  ];
-  const current = settings.weekStartDay ?? 1;
-
-  return (
-    <div>
-      <div style={{ background:"var(--card-bg)", borderRadius:14, padding:"18px 24px", boxShadow:"0 1px 4px #1C233310", maxWidth:560 }}>
-        <div style={{ fontSize:14, fontWeight:800, color:"var(--text-primary)", marginBottom:2 }}>Start of Week</div>
-        <div style={{ fontSize:12, color:"var(--text-muted)", marginBottom:14 }}>Choose which day the weekly grid on the Timesheets page starts from.</div>
-        <select value={current} onChange={e=>setSettings(p=>({ ...p, weekStartDay: parseInt(e.target.value,10) }))}
-          style={{ width:"100%", maxWidth:220, border:"1.5px solid var(--border-strong)", borderRadius:8, padding:"9px 12px", fontSize:14, color:"var(--text-primary)", outline:"none", background:"var(--bg-subtle)", boxSizing:"border-box", fontWeight:600, cursor:"pointer" }}>
-          {dayOptions.map(d => <option key={d.value} value={d.value}>{d.label}</option>)}
-        </select>
-      </div>
-    </div>
-  );
+    return (
+        <div>
+            <div style={{ background: "var(--card-bg)", borderRadius: 14, padding: "18px 24px", boxShadow: "0 1px 4px #1C233310", maxWidth: 560, marginBottom: 20 }}>
+                <div style={{ fontSize: 14, fontWeight: 800, color: "var(--text-primary)", marginBottom: 2 }}>Start of Week</div>
+                <div style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 14 }}>Choose which day the weekly grid on the Timesheets page starts from.</div>
+                <select value={current} onChange={e => setSettings(p => ({ ...p, weekStartDay: parseInt(e.target.value, 10) }))}
+                    style={{ width: "100%", maxWidth: 220, border: "1.5px solid var(--border-strong)", borderRadius: 8, padding: "9px 12px", fontSize: 14, color: "var(--text-primary)", outline: "none", background: "var(--bg-subtle)", boxSizing: "border-box", fontWeight: 600, cursor: "pointer" }}>
+                    {dayOptions.map(d => <option key={d.value} value={d.value}>{d.label}</option>)}
+                </select>
+            </div>
+            <StaffVisibilityPicker staff={staff} selectedIds={selected} onToggle={toggle} onShowAll={showAll} />
+        </div>
+    );
 }
 function SettingsDashboardPage({ settings, setSettings, staff }) {
     const selected = settings.dashboardStaffIds && settings.dashboardStaffIds.length ? settings.dashboardStaffIds : staff.map(s => s.id);
@@ -2374,6 +2419,31 @@ function SettingsDashboardPage({ settings, setSettings, staff }) {
                     ))}
                     {staff.length === 0 && <div style={{ fontSize: 12, color: "var(--text-muted)" }}>No team members yet.</div>}
                 </div>
+            </div>
+        </div>
+    );
+}
+function StaffVisibilityPicker({ staff, selectedIds, onToggle, onShowAll }) {
+    const selected = selectedIds && selectedIds.length ? selectedIds : staff.map(s => s.id);
+    const allSelected = selected.length === staff.length;
+    return (
+        <div style={{ background: "var(--card-bg)", borderRadius: 14, padding: 24, boxShadow: "0 1px 4px #1C233310", maxWidth: 560 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+                <h2 style={{ fontSize: 15, fontWeight: 800, color: "var(--text-primary)", margin: 0 }}>Visible Team Members</h2>
+                {!allSelected && <button onClick={onShowAll} style={{ background: "none", border: "none", color: ACCENT_TEXT, fontSize: 12, fontWeight: 700, cursor: "pointer", textDecoration: "underline" }}>Show All</button>}
+            </div>
+            <p style={{ fontSize: 12, color: "var(--text-muted)", margin: "0 0 16px" }}>Choose which team members appear on this page.</p>
+            <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                {staff.map(s => (
+                    <div key={s.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "9px 4px", borderBottom: "1px solid var(--border)" }}>
+                        <span style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 13, fontWeight: 600, color: "var(--text-primary)" }}>
+                            <Avatar name={s.name} color={s.color} size={26} />
+                            {s.name}
+                        </span>
+                        <ToggleSwitch on={selected.includes(s.id)} onClick={() => onToggle(s.id)} />
+                    </div>
+                ))}
+                {staff.length === 0 && <div style={{ fontSize: 12, color: "var(--text-muted)" }}>No team members yet.</div>}
             </div>
         </div>
     );
@@ -2417,8 +2487,8 @@ function SettingsView({ settings, setSettings, jobs, staff, setStaff, roles, set
                   {page === "system" && <SettingsSystemPage settings={settings} setSettings={setSettings} />}
                   {page === "dashboard" && <SettingsDashboardPage settings={settings} setSettings={setSettings} staff={staff} />}
           {page === "jobs" && <SettingsJobsPage settings={settings} setSettings={setSettings} jobs={jobs} onImport={onImport} />}
-          {page === "schedule" && <SettingsEmptyPage label="Scheduler" />}
-          {page === "timesheets" && <SettingsTimesheetsPage settings={settings} setSettings={setSettings} />}
+                  {page === "schedule" && <SettingsSchedulerPage settings={settings} setSettings={setSettings} staff={staff} />}
+                  {page === "timesheets" && <SettingsTimesheetsPage settings={settings} setSettings={setSettings} staff={staff} />}
           {page === "purchaseorders" && <SettingsPurchaseOrdersPage settings={settings} setSettings={setSettings} />}
           {page === "quotes" && <SettingsEmptyPage label="Quotes" />}
           {page === "invoices" && <SettingsEmptyPage label="Invoices" />}
@@ -2451,7 +2521,7 @@ function JobPickerModal({ jobs, onSelect, onClose }) {
               onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
               <span style={{ width:10, height:10, borderRadius:3, background:sm.color, flexShrink:0 }} />
               <div>
-                <div style={{ fontSize:13, fontWeight:700, color:ACCENT_TEXT, fontFamily:"monospace" }}>{j.id}</div>
+                <div style={{ fontSize:13, fontWeight:700, color:ACCENT_TEXT }}>{j.id}</div>
                 <div style={{ fontSize:12, color:"var(--text-secondary)" }}>{j.title}</div>
               </div>
             </div>
@@ -2736,7 +2806,7 @@ function AssetsView({ assets, setAssets, groups, setGroups, staff, settings, set
       case "model":
         return <span style={{ ...ellipsis, fontSize:12, color:"var(--text-secondary)" }}>{a.model || "—"}</span>;
       case "identifier":
-        return <span style={{ ...ellipsis, fontFamily:"monospace", fontSize:12, color:"var(--text-secondary)" }}>{a.identifier || "—"}</span>;
+        return <span style={{ ...ellipsis, fontSize:12, color:"var(--text-secondary)" }}>{a.identifier || "—"}</span>;
       case "location":
         return <span style={{ ...ellipsis, fontSize:12, color:"var(--text-secondary)" }}>{a.location || "—"}</span>;
       case "assignedStaff": {
@@ -2903,7 +2973,7 @@ function PurchaseOrdersView({ jobs, staff, customers, suppliers, purchaseOrders,
         {rows.map(({ po, job, supplier }) => (
             <div key={po.id} style={{ background: "var(--card-bg)", borderRadius: 12, padding: "14px 18px", boxShadow: "0 1px 4px #1C233310", display: "flex", flexWrap: "wrap", alignItems: "center", gap: 16 }}>
             <div style={{ minWidth:100 }}>
-              <div style={{ fontFamily:"monospace", fontSize:13, fontWeight:800, color:ACCENT_TEXT }}>{po.poNumber}</div>
+              <div style={{ fontSize:13, fontWeight:800, color:ACCENT_TEXT }}>{po.poNumber}</div>
               <div style={{ fontSize:11, color:"var(--text-muted)", marginTop:2 }}>{formatDate(po.dateCreated)}</div>
             </div>
             <div style={{ flex:1 }}>
@@ -2914,7 +2984,7 @@ function PurchaseOrdersView({ jobs, staff, customers, suppliers, purchaseOrders,
               <div style={{ fontSize:11, color:"var(--text-muted)", marginBottom:2 }}>Job</div>
               {job ? (
                 <button onClick={()=>onOpenJob(job)} style={{ background:"none", border:"none", padding:0, cursor:"pointer", textAlign:"left" }}>
-                  <div style={{ fontSize:12, fontWeight:700, color:ACCENT_TEXT, fontFamily:"monospace" }}>{job.id}</div>
+                  <div style={{ fontSize:12, fontWeight:700, color:ACCENT_TEXT }}>{job.id}</div>
                   <div style={{ fontSize:11, color:"var(--text-secondary)" }}>{job.title.slice(0,30)}</div>
                 </button>
               ) : <span style={{ fontSize:12, color:"var(--text-muted)" }}>{po.jobId} (deleted)</span>}
@@ -2995,7 +3065,7 @@ function NotesPrintView({ job, company, onClose }) {
           </div>
           <div style={{ textAlign:"right" }}>
             <div style={{ fontSize:22, fontWeight:900, letterSpacing:1 }}>JOB NOTES</div>
-            <div style={{ fontSize:14, fontWeight:700, color:ACCENT_TEXT, marginTop:6, fontFamily:"monospace" }}>{job.id}</div>
+            <div style={{ fontSize:14, fontWeight:700, color:ACCENT_TEXT, marginTop:6 }}>{job.id}</div>
             <div style={{ fontSize:11, color:"#9CA3AF", marginTop:2 }}>Printed: {formatDate(todayISO())}</div>
           </div>
         </div>
@@ -3089,7 +3159,7 @@ function JobSheetPrintView({ job, staff, roles, customers, suppliers, timeEntrie
           </div>
           <div style={{ textAlign:"right" }}>
             <div style={{ fontSize:24, fontWeight:900, letterSpacing:1 }}>JOB SHEET</div>
-            <div style={{ fontSize:14, fontWeight:700, color:ACCENT_TEXT, marginTop:6, fontFamily:"monospace" }}>{job.id}</div>
+            <div style={{ fontSize:14, fontWeight:700, color:ACCENT_TEXT, marginTop:6 }}>{job.id}</div>
             <div style={{ fontSize:11, color:"#9CA3AF", marginTop:2 }}>Printed: {formatDate(todayISO())}</div>
           </div>
         </div>
@@ -3189,7 +3259,7 @@ function JobSheetPrintView({ job, staff, roles, customers, suppliers, timeEntrie
                   const supplier = suppliers.find(s=>s.id===po.supplierId);
                   return (
                     <div key={po.id} style={{ display:"flex", justifyContent:"space-between", fontSize:12, borderBottom:"1px solid #F1F4F8", padding:"4px 0" }}>
-                      <span><strong style={{ fontFamily:"monospace" }}>{po.poNumber}</strong> — {supplier?.name || "Unknown supplier"}{po.reference ? ` (${po.reference})` : ""}</span>
+                      <span><strong style={{  }}>{po.poNumber}</strong> — {supplier?.name || "Unknown supplier"}{po.reference ? ` (${po.reference})` : ""}</span>
                       <span style={{ color: po.status==="billed" ? "#065F46" : "#92400E", fontWeight:700 }}>{po.status==="billed" ? `$${po.billedCost?.toFixed(2)}` : "Unbilled"}</span>
                     </div>
                   );
@@ -3679,7 +3749,7 @@ function JobDetailPage({ job, staff, roles, customers, suppliers, timeEntries, p
               <div style={{ background:"#FFF8EC",border:"1.5px solid #FDE68A",borderRadius:8,padding:14,marginBottom:14 }}>
                 <div style={{ marginBottom:8 }}>
                   <label style={{ display:"block",fontSize:12,fontWeight:700,color:"#92400E",marginBottom:5,textTransform:"uppercase",letterSpacing:0.5 }}>Reason for Hold</label>
-                  <textarea value={form.holdReason} onChange={e=>set("holdReason",e.target.value)} rows={2} placeholder="Why is this job on hold?" style={{ width:"100%",border:"1.5px solid #FDE68A",borderRadius:7,padding:"8px 10px",fontSize:13,background:"var(--card-bg)",boxSizing:"border-box",resize:"vertical",outline:"none" }}/>
+                                      <textarea value={form.holdReason} onChange={e => set("holdReason", e.target.value)} rows={2} placeholder="Why is this job on hold?" style={{ width: "100%", border: "1.5px solid #FDE68A", borderRadius: 7, padding: "8px 10px", fontSize: 13, background: "var(--card-bg)", boxSizing: "border-box", resize: "vertical", outline: "none", color: "var(--text-primary)", fontFamily: "'Inter',system-ui,sans-serif" }} />
                 </div>
                 <Inp label="On Hold Since" type="date" value={form.holdSince||d(0)} onChange={e=>set("holdSince",e.target.value)} style={{ marginBottom:0 }}/>
               </div>
@@ -3688,7 +3758,7 @@ function JobDetailPage({ job, staff, roles, customers, suppliers, timeEntries, p
               <div style={{ background:"#FDF2F8",border:"1.5px solid #FBCFE8",borderRadius:8,padding:14,marginBottom:14 }}>
                 <div style={{ marginBottom:8 }}>
                   <label style={{ display:"block",fontSize:12,fontWeight:700,color:"#9D174D",marginBottom:5,textTransform:"uppercase",letterSpacing:0.5 }}>Follow Up Note</label>
-                  <textarea value={form.followUpNote} onChange={e=>set("followUpNote",e.target.value)} rows={2} placeholder="What are you following up on?" style={{ width:"100%",border:"1.5px solid #FBCFE8",borderRadius:7,padding:"8px 10px",fontSize:13,background:"var(--card-bg)",boxSizing:"border-box",resize:"vertical",outline:"none" }}/>
+                                      <textarea value={form.followUpNote} onChange={e => set("followUpNote", e.target.value)} rows={2} placeholder="What are you following up on?" style={{ width: "100%", border: "1.5px solid #FBCFE8", borderRadius: 7, padding: "8px 10px", fontSize: 13, background: "var(--card-bg)", boxSizing: "border-box", resize: "vertical", outline: "none", color: "var(--text-primary)", fontFamily: "'Inter',system-ui,sans-serif" }} />
                 </div>
                 <Inp label="Follow Up Since" type="date" value={form.followUpSince||d(0)} onChange={e=>set("followUpSince",e.target.value)} style={{ marginBottom:0 }}/>
               </div>
@@ -3745,7 +3815,7 @@ function JobDetailPage({ job, staff, roles, customers, suppliers, timeEntries, p
 
             <div style={{ marginBottom:20 }}>
               <label style={{ display:"block",fontSize:12,fontWeight:700,color:"var(--text-secondary)",marginBottom:5,textTransform:"uppercase",letterSpacing:0.5 }}>Notes</label>
-              <textarea value={form.notes} onChange={e=>set("notes",e.target.value)} rows={2} placeholder="Any additional notes..." style={{ width:"100%",border:"1.5px solid var(--border-strong)",borderRadius:8,padding:"9px 12px",fontSize:14,background:"var(--bg-subtle)",boxSizing:"border-box",resize:"vertical",outline:"none" }}/>
+                              <textarea value={form.notes} onChange={e => set("notes", e.target.value)} rows={2} placeholder="Any additional notes..." style={{ width: "100%", border: "1.5px solid var(--border-strong)", borderRadius: 8, padding: "9px 12px", fontSize: 14, background: "var(--bg-subtle)", boxSizing: "border-box", resize: "vertical", outline: "none", color: "var(--text-primary)" }} />
             </div>
             <div style={{ display:"flex",gap:10,justifyContent:"space-between" }}>
               <div>{!isNew&&<Btn variant="danger" onClick={()=>setConfirmingDelete(true)}>Delete Job</Btn>}</div>
@@ -4134,7 +4204,8 @@ export default function App() {
                           {tab === "dashboard" && <Dashboard jobs={jobs} staff={staff} roles={roles} settings={settings} onNavigateStatus={navigateToStatus} />}
                           {tab === "jobs" && <JobsView key={jobsViewKey} jobs={jobs} staff={staff} customers={customers} settings={settings} setSettings={setSettings} initialFilter={jobsPresetFilter} showCompleted={showCompletedJobs} setShowCompleted={setShowCompletedJobs} sortKey={jobsSortKey} setSortKey={setJobsSortKey} sortDir={jobsSortDir} setSortDir={setJobsSortDir} search={jobsSearch} setSearch={setJobsSearch} onAdd={openNewJob} onEdit={j => openJob(j.id)} onBack={() => setTab("dashboard")} />}
             {tab==="onhold"    && <OnHoldView jobs={jobs} staff={staff} onEdit={j=>openJob(j.id)} onBack={()=>setTab("dashboard")}/>}
-            {tab==="followup"  && <FollowUpView jobs={jobs} staff={staff} onEdit={j=>openJob(j.id)} onBack={()=>setTab("dashboard")}/>}
+                          {tab === "schedule" && <SchedulerView jobs={jobs} staff={staff} roles={roles} settings={settings} scheduleData={schedulerDataObj.scheduleData} setScheduleData={setScheduleData} />}
+                          {tab === "followup" && <FollowUpView jobs={jobs} staff={staff} onEdit={j => openJob(j.id)} onBack={() => setTab("dashboard")} />}
                           {tab === "schedule" && <SchedulerView jobs={jobs} staff={staff} roles={roles} scheduleData={schedulerDataObj.scheduleData} setScheduleData={setScheduleData} />}
             {tab==="timesheets"&& <TimesheetsView jobs={jobs} staff={staff} roles={roles} timeEntries={timeEntries} setTimeEntries={setTimeEntries} settings={settings}/>}
             {tab==="purchaseorders" && <PurchaseOrdersView jobs={jobs} staff={staff} customers={customers} suppliers={suppliers} purchaseOrders={purchaseOrders} setPurchaseOrders={setPurchaseOrders} company={company} settings={settings} onOpenJob={j=>openJob(j.id)}/>}

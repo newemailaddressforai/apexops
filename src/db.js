@@ -49,6 +49,8 @@ const settingsMap = {
         mobile_nav_tabs: s.mobileNavTabs || ["dashboard", "jobs", "assets", "contacts"],
         dashboard_staff_ids: s.dashboardStaffIds || [],
         dashboard_visible_statuses: s.dashboardVisibleStatuses || {},
+        scheduler_staff_ids: s.schedulerStaffIds || [],
+        timesheets_staff_ids: s.timesheetsStaffIds || [],
   }),
   fromRow: (r) => ({
     theme: r.theme,
@@ -65,6 +67,8 @@ const settingsMap = {
       mobileNavTabs: r.mobile_nav_tabs || ["dashboard", "jobs", "assets", "contacts"],
       dashboardStaffIds: r.dashboard_staff_ids || [],
       dashboardVisibleStatuses: r.dashboard_visible_statuses || {},
+      schedulerStaffIds: r.scheduler_staff_ids || [],
+      timesheetsStaffIds: r.timesheets_staff_ids || [],
   }),
 };
 
