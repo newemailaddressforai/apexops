@@ -12,6 +12,21 @@ const offsiteTrackerMap = {
     toRow: (o) => ({ id: "main", cols: o.cols || [], data: o.data || {}, allocated: o.allocated || {} }),
     fromRow: (r) => ({ cols: r.cols || [], data: r.data || {}, allocated: r.allocated || {} }),
 };
+const invoiceMap = {
+  toRow: (i) => ({
+    id: i.id, invoice_number: i.invoiceNumber, job_id: i.jobId || null, customer_name: i.customerName || "",
+    status: i.status, issue_date: i.issueDate, due_date: i.dueDate || null,
+    line_items: i.lineItems || [], tax_rate: i.taxRate ?? 15,
+    subtotal: i.subtotal || 0, tax_amount: i.taxAmount || 0, total: i.total || 0, notes: i.notes || "",
+  }),
+  fromRow: (r) => ({
+    id: r.id, invoiceNumber: r.invoice_number, jobId: r.job_id, customerName: r.customer_name,
+    status: r.status, issueDate: r.issue_date, dueDate: r.due_date,
+    lineItems: r.line_items || [], taxRate: r.tax_rate != null ? Number(r.tax_rate) : 15,
+    subtotal: Number(r.subtotal)||0, taxAmount: Number(r.tax_amount)||0, total: Number(r.total)||0,
+    notes: r.notes || "", createdAt: r.created_at?.split("T")[0],
+  }),
+};
 const staffMap = {
   toRow: (s) => ({ id: s.id, name: s.name, role_id: s.roleId || null, color: s.color }),
   fromRow: (r) => ({ id: r.id, name: r.name, roleId: r.role_id, color: r.color }),
@@ -48,9 +63,13 @@ const settingsMap = {
         asset_summary_fields: s.assetSummaryFields || [],
         mobile_nav_tabs: s.mobileNavTabs || ["dashboard", "jobs", "assets", "contacts"],
         dashboard_staff_ids: s.dashboardStaffIds || [],
-        dashboard_visible_statuses: s.dashboardVisibleStatuses || {},
-        scheduler_staff_ids: s.schedulerStaffIds || [],
-        timesheets_staff_ids: s.timesheetsStaffIds || [],
+            dashboard_visible_statuses: s.dashboardVisibleStatuses || {},
+    scheduler_staff_ids: s.schedulerStaffIds || [],
+    timesheets_staff_ids: s.timesheetsStaffIds || [],
+    invoice_footer_note: s.invoiceFooterNote || "",
+    invoice_terms: s.invoiceTerms || "",
+    invoice_tax_rate: s.invoiceTaxRate ?? 15,
+    invoice_number_prefix: s.invoiceNumberPrefix || "INV",
   }),
   fromRow: (r) => ({
     theme: r.theme,
@@ -66,9 +85,13 @@ const settingsMap = {
       assetSummaryFields: r.asset_summary_fields || [],
       mobileNavTabs: r.mobile_nav_tabs || ["dashboard", "jobs", "assets", "contacts"],
       dashboardStaffIds: r.dashboard_staff_ids || [],
-      dashboardVisibleStatuses: r.dashboard_visible_statuses || {},
-      schedulerStaffIds: r.scheduler_staff_ids || [],
-      timesheetsStaffIds: r.timesheets_staff_ids || [],
+          dashboardVisibleStatuses: r.dashboard_visible_statuses || {},
+    schedulerStaffIds: r.scheduler_staff_ids || [],
+    timesheetsStaffIds: r.timesheets_staff_ids || [],
+    invoiceFooterNote: r.invoice_footer_note || "",
+    invoiceTerms: r.invoice_terms || "",
+    invoiceTaxRate: r.invoice_tax_rate != null ? Number(r.invoice_tax_rate) : 15,
+    invoiceNumberPrefix: r.invoice_number_prefix || "INV",
   }),
 };
 
@@ -248,11 +271,11 @@ export function useSyncedJobs(onError) {
 
 // ─── INITIAL LOAD: fetch everything from Supabase in one go ───────────────────
 export async function fetchAllData() {
-    const [
-        staffRes, rolesRes, customersRes, suppliersRes, companyRes, settingsRes,
-        jobsRes, jobNotesRes, jobCostsRes, timeEntriesRes, poRes, assetsRes, assetGroupsRes,
-        schedulerRes, offsiteRes,
-    ] = await Promise.all([
+      const [
+    staffRes, rolesRes, customersRes, suppliersRes, companyRes, settingsRes,
+    jobsRes, jobNotesRes, jobCostsRes, timeEntriesRes, poRes, assetsRes, assetGroupsRes,
+    schedulerRes, offsiteRes, invoicesRes,
+  ] = await Promise.all([
         supabase.from("staff").select("*"),
         supabase.from("roles").select("*"),
         supabase.from("customers").select("*"),
@@ -266,8 +289,9 @@ export async function fetchAllData() {
         supabase.from("purchase_orders").select("*"),
         supabase.from("assets").select("*"),
         supabase.from("asset_groups").select("*"),
-        supabase.from("scheduler_data").select("*").eq("id", "main").maybeSingle(),
-        supabase.from("offsite_tracker").select("*").eq("id", "main").maybeSingle(),
+    supabase.from("scheduler_data").select("*").eq("id", "main").maybeSingle(),
+    supabase.from("offsite_tracker").select("*").eq("id", "main").maybeSingle(),
+    supabase.from("invoices").select("*"),
     ]);
 
   const firstError = [staffRes, rolesRes, customersRes, suppliersRes, jobsRes, jobNotesRes, jobCostsRes, timeEntriesRes, poRes, assetsRes, assetGroupsRes].find(r => r.error);
@@ -297,9 +321,10 @@ export async function fetchAllData() {
     purchaseOrders: (poRes.data || []).map(poMap.fromRow),
         assets: (assetsRes.data || []).map(assetMap.fromRow),
         assetGroups: (assetGroupsRes.data || []).map(assetGroupMap.fromRow),
-        schedulerData: schedulerRes.data ? schedulerDataMap.fromRow(schedulerRes.data) : null,
-        offsiteTracker: offsiteRes.data ? offsiteTrackerMap.fromRow(offsiteRes.data) : null,
-    };
+            schedulerData: schedulerRes.data ? schedulerDataMap.fromRow(schedulerRes.data) : null,
+    offsiteTracker: offsiteRes.data ? offsiteTrackerMap.fromRow(offsiteRes.data) : null,
+    invoices: (invoicesRes.data || []).map(invoiceMap.fromRow),
+  };
 }
 
 // Seeds the company/settings singleton rows on first-ever run (fresh database).
@@ -316,5 +341,4 @@ export async function ensureSingletonsExist(defaultCompany, defaultSettings, def
     const { data: existingOffsite } = await supabase.from("offsite_tracker").select("id").eq("id", "main").maybeSingle();
     if (!existingOffsite) await supabase.from("offsite_tracker").insert(offsiteTrackerMap.toRow(defaultOffsiteTracker));
 }
-
-export { staffMap, rolesMap, contactMap, companyMap, settingsMap, timeEntryMap, poMap, assetMap, assetGroupMap, jobCoreMap, jobNoteMap, jobCostMap, schedulerDataMap, offsiteTrackerMap };
+export { staffMap, rolesMap, contactMap, companyMap, settingsMap, timeEntryMap, poMap, assetMap, assetGroupMap, jobCoreMap, jobNoteMap, jobCostMap, schedulerDataMap, offsiteTrackerMap, invoiceMap };

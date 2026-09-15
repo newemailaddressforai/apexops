@@ -1,6 +1,6 @@
 import { useState, useMemo, useRef, useEffect, Fragment } from "react";
 import { supabase } from "./supabaseClient";
-import { useSyncedTable, useSyncedSingleton, useSyncedJobs, fetchAllData, ensureSingletonsExist, staffMap, rolesMap, contactMap, companyMap, settingsMap, timeEntryMap, poMap, assetMap, assetGroupMap, schedulerDataMap, offsiteTrackerMap } from "./db";
+import { useSyncedTable, useSyncedSingleton, useSyncedJobs, fetchAllData, ensureSingletonsExist, staffMap, rolesMap, contactMap, companyMap, settingsMap, timeEntryMap, poMap, assetMap, assetGroupMap, schedulerDataMap, offsiteTrackerMap, invoiceMap } from "./db";
 import logoSidebar from "./assets/logo-sidebar.png";
 import { LoginScreen, FullScreenStatus } from "./AuthScreens";
 import JSZip from "jszip";
@@ -145,6 +145,10 @@ const INITIAL_SETTINGS = {
     dashboardVisibleStatuses: { "not-started": true, "in-progress": true, "on-hold": true, "follow-up": true, "ready-to-assemble": true, "completed": false },
     schedulerStaffIds: [], // empty = show everyone
     timesheetsStaffIds: [], // empty = show everyone
+      invoiceFooterNote: "Thank you for your business. Payment due within 14 days of invoice date.",
+  invoiceTerms: "",
+  invoiceTaxRate: 15,
+  invoiceNumberPrefix: "INV",
   visibleTabs: {
     dashboard: true, jobs: true, onhold: true, followup: true,
     schedule: true, timesheets: true, purchaseorders: true, offsite: true, contacts: true,
@@ -342,6 +346,45 @@ function nextPONumber(purchaseOrders) {
   const next = (nums.length ? Math.max(...nums) : 1000) + 1;
   return "PO-" + next;
 }
+
+function liid() { return "li" + Date.now() + Math.floor(Math.random()*1000); }
+function invid() { return "inv" + Date.now(); }
+
+function buildInvoiceLinesForJob(job, staff, roles, timeEntries, purchaseOrders) {
+  const lines = [];
+  const jobEntries = (timeEntries || []).filter(t => t.jobId === job.id);
+  const hoursByStaff = {};
+  jobEntries.forEach(t => { hoursByStaff[t.staffId] = (hoursByStaff[t.staffId] || 0) + t.hours; });
+  Object.entries(hoursByStaff).forEach(([staffId, hours]) => {
+    const person = staff.find(s => s.id === staffId);
+    const { chargeOutRate, roleName } = getRoleRates(person?.roleId, roles);
+    lines.push({ id: liid(), type: "labour", description: `Labour — ${person?.name || "Unknown"} (${roleName})`, quantity: hours, unitPrice: chargeOutRate });
+  });
+  (job.jobCosts || []).forEach(cost => {
+    lines.push({ id: liid(), type: "cost", description: cost.label, quantity: 1, unitPrice: cost.amount });
+  });
+  (purchaseOrders || []).filter(po => po.jobId === job.id && po.status === "billed").forEach(po => {
+    lines.push({ id: liid(), type: "po", description: `Purchase Order ${po.poNumber}`, quantity: 1, unitPrice: po.billedCost || 0 });
+  });
+  return lines;
+}
+function calcInvoiceTotals(lines, taxRate) {
+  const subtotal = lines.reduce((s, l) => s + (Number(l.quantity) || 0) * (Number(l.unitPrice) || 0), 0);
+  const taxAmount = subtotal * ((Number(taxRate) || 0) / 100);
+  const total = subtotal + taxAmount;
+  return { subtotal, taxAmount, total };
+}
+function nextInvoiceNumber(invoices, prefix) {
+  const p = prefix || "INV";
+  const nums = invoices.map(i => parseInt((i.invoiceNumber || "").replace(/\D/g, ""), 10)).filter(n => !isNaN(n));
+  const next = (nums.length ? Math.max(...nums) : 1000) + 1;
+  return `${p}-${next}`;
+}
+const INVOICE_STATUS_META = {
+  draft: { label: "Draft", color: "#9CA3AF" },
+  sent: { label: "Sent", color: "#F59E0B" },
+  paid: { label: "Paid", color: "#10B981" },
+};
 function getDaysInMonth(y, m) { return new Date(y, m + 1, 0).getDate(); }
 function getMonthDays(y, m) {
   return Array.from({ length: getDaysInMonth(y, m) }, (_, i) => {
@@ -2492,7 +2535,7 @@ function SettingsView({ settings, setSettings, jobs, staff, setStaff, roles, set
                   {page === "timesheets" && <SettingsTimesheetsPage settings={settings} setSettings={setSettings} staff={staff} />}
           {page === "purchaseorders" && <SettingsPurchaseOrdersPage settings={settings} setSettings={setSettings} />}
           {page === "quotes" && <SettingsEmptyPage label="Quotes" />}
-          {page === "invoices" && <SettingsEmptyPage label="Invoices" />}
+          {page === "invoices" && <SettingsInvoicesPage settings={settings} setSettings={setSettings} />}
           {page === "bills" && <SettingsEmptyPage label="Bills" />}
           {page === "offsite" && <SettingsEmptyPage label="Offsite" />}
           {page === "assets" && <SettingsAssetsPage settings={settings} setSettings={setSettings} />}
@@ -3986,6 +4029,362 @@ function SettingsMobileNavPage({ settings, setSettings }) {
         </div>
     );
 }
+function InvoiceStatusBadge({ invoice, onClick }) {
+  const meta = INVOICE_STATUS_META[invoice.status] || INVOICE_STATUS_META.draft;
+  return (
+    <button onClick={onClick} style={{ display:"inline-flex", alignItems:"center", gap:6, padding:"4px 10px", borderRadius:99, border:"1.5px solid "+meta.color, background:meta.color+"18", color:meta.color, fontWeight:800, fontSize:11, textTransform:"uppercase", letterSpacing:0.3, cursor:onClick?"pointer":"default" }}>
+      <span style={{ width:7, height:7, borderRadius:"50%", background:meta.color }} />
+      {meta.label}
+    </button>
+  );
+}
+
+function InvoiceStatusModal({ invoice, onSave, onClose }) {
+  return (
+    <Modal title={`Update Status — ${invoice.invoiceNumber}`} onClose={onClose}>
+      <p style={{ fontSize:12, color:"var(--text-muted)", margin:"0 0 16px" }}>Choose the current status of this invoice.</p>
+      <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+        {Object.entries(INVOICE_STATUS_META).map(([key, meta]) => (
+          <button key={key} onClick={()=>onSave({ ...invoice, status:key })}
+            style={{ display:"flex", alignItems:"center", gap:10, padding:"12px 14px", borderRadius:9, border: invoice.status===key ? `2px solid ${meta.color}` : "1.5px solid var(--border-strong)", background: invoice.status===key ? meta.color+"18" : "var(--card-bg)", cursor:"pointer", textAlign:"left" }}>
+            <span style={{ width:10, height:10, borderRadius:"50%", background:meta.color }} />
+            <span style={{ fontWeight:700, color:"var(--text-primary)", fontSize:14 }}>{meta.label}</span>
+          </button>
+        ))}
+      </div>
+      <div style={{ display:"flex", justifyContent:"flex-end", marginTop:20 }}>
+        <Btn variant="secondary" onClick={onClose}>Close</Btn>
+      </div>
+    </Modal>
+  );
+}
+
+function InvoiceBuilderModal({ job, staff, roles, customers, timeEntries, purchaseOrders, invoices, settings, editingInvoice, onSave, onClose }) {
+  const customer = customers.find(c => c.name === job.client);
+  const [invoiceNumber, setInvoiceNumber] = useState(editingInvoice?.invoiceNumber || nextInvoiceNumber(invoices, settings?.invoiceNumberPrefix));
+  const [issueDate, setIssueDate] = useState(editingInvoice?.issueDate || todayISO());
+  const [dueDate, setDueDate] = useState(editingInvoice?.dueDate || todayISO());
+  const [lines, setLines] = useState(editingInvoice?.lineItems || buildInvoiceLinesForJob(job, staff, roles, timeEntries, purchaseOrders));
+  const [notes, setNotes] = useState(editingInvoice?.notes ?? (settings?.invoiceFooterNote || ""));
+  const [error, setError] = useState("");
+  const taxRate = settings?.invoiceTaxRate ?? 15;
+
+  const updateLine = (id, field, value) => setLines(prev => prev.map(l => l.id === id ? { ...l, [field]: value } : l));
+  const removeLine = (id) => setLines(prev => prev.filter(l => l.id !== id));
+  const addCustomLine = () => setLines(prev => [...prev, { id: liid(), type: "custom", description: "", quantity: 1, unitPrice: 0 }]);
+
+  const { subtotal, taxAmount, total } = calcInvoiceTotals(lines, taxRate);
+
+  const handleSave = () => {
+    if (!invoiceNumber.trim()) { setError("Invoice number is required."); return; }
+    if (lines.length === 0) { setError("Add at least one line item."); return; }
+    onSave({
+      id: editingInvoice?.id || invid(),
+      invoiceNumber: invoiceNumber.trim(), jobId: job.id, customerName: job.client,
+      status: editingInvoice?.status || "draft",
+      issueDate, dueDate, lineItems: lines, taxRate, subtotal, taxAmount, total, notes,
+      createdAt: editingInvoice?.createdAt || todayISO(),
+    });
+  };
+
+  const TYPE_LABELS = { labour: "Labour", cost: "Cost", po: "Purchase Order", custom: "Custom" };
+
+  return (
+    <Modal title={editingInvoice ? `Edit ${editingInvoice.invoiceNumber}` : `New Invoice — ${job.id}`} onClose={onClose} wide>
+      <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:"0 16px" }}>
+        <Inp label="Invoice Number" value={invoiceNumber} onChange={e=>{ setInvoiceNumber(e.target.value); if(error) setError(""); }} />
+        <Inp label="Issue Date" type="date" value={issueDate} onChange={e=>setIssueDate(e.target.value)} />
+        <Inp label="Due Date" type="date" value={dueDate} onChange={e=>setDueDate(e.target.value)} />
+      </div>
+
+      <div style={{ background:"var(--bg-subtle)", borderRadius:8, padding:"10px 14px", marginBottom:16 }}>
+        <div style={{ fontSize:11, fontWeight:700, color:"var(--text-muted)", textTransform:"uppercase", letterSpacing:0.5, marginBottom:4 }}>Bill To</div>
+        <div style={{ fontSize:14, fontWeight:700, color:"var(--text-primary)" }}>{job.client || "No customer set"}</div>
+        {customer?.address && <div style={{ fontSize:12, color:"var(--text-secondary)", marginTop:2 }}>{customer.address}</div>}
+        {customer?.email && <div style={{ fontSize:12, color:"var(--text-secondary)" }}>{customer.email}</div>}
+      </div>
+
+      <label style={{ display:"block", fontSize:12, fontWeight:700, color:"var(--text-secondary)", marginBottom:8, textTransform:"uppercase", letterSpacing:0.5 }}>Line Items</label>
+      <div style={{ display:"flex", flexDirection:"column", gap:8, marginBottom:12, maxHeight:280, overflowY:"auto" }}>
+        {lines.map(l => (
+          <div key={l.id} style={{ display:"flex", gap:8, alignItems:"flex-start", background:"var(--bg-subtle)", borderRadius:8, padding:10 }}>
+            <div style={{ flex:2 }}>
+              <input value={l.description} onChange={e=>updateLine(l.id,"description",e.target.value)} placeholder="Description"
+                style={{ width:"100%", border:"1.5px solid var(--border-strong)", borderRadius:7, padding:"7px 10px", fontSize:13, background:"var(--card-bg)", color:"var(--text-primary)", outline:"none", boxSizing:"border-box" }} />
+              <div style={{ fontSize:10, color:"var(--text-muted)", marginTop:3, textTransform:"uppercase", letterSpacing:0.3 }}>{TYPE_LABELS[l.type] || "Custom"}</div>
+            </div>
+            <input type="number" value={l.quantity} onChange={e=>updateLine(l.id,"quantity",parseFloat(e.target.value)||0)} placeholder="Qty"
+              style={{ width:70, border:"1.5px solid var(--border-strong)", borderRadius:7, padding:"7px 8px", fontSize:13, background:"var(--card-bg)", color:"var(--text-primary)", outline:"none" }} />
+            <input type="number" value={l.unitPrice} onChange={e=>updateLine(l.id,"unitPrice",parseFloat(e.target.value)||0)} placeholder="Rate"
+              style={{ width:90, border:"1.5px solid var(--border-strong)", borderRadius:7, padding:"7px 8px", fontSize:13, background:"var(--card-bg)", color:"var(--text-primary)", outline:"none" }} />
+            <div style={{ width:90, textAlign:"right", fontSize:13, fontWeight:700, color:"var(--text-primary)", paddingTop:8 }}>${((l.quantity||0)*(l.unitPrice||0)).toFixed(2)}</div>
+            <button onClick={()=>removeLine(l.id)} style={{ background:"none", border:"none", color:"var(--text-muted)", fontSize:16, cursor:"pointer", padding:"6px 2px" }}>×</button>
+          </div>
+        ))}
+        {lines.length===0 && <div style={{ fontSize:12, color:"var(--text-muted)", textAlign:"center", padding:16 }}>No line items yet.</div>}
+      </div>
+      <button onClick={addCustomLine} style={{ background:"none", border:"1.5px dashed var(--border-strong)", borderRadius:8, padding:"8px 0", width:"100%", color:"var(--text-secondary)", fontSize:13, fontWeight:600, cursor:"pointer", marginBottom:20 }}>+ Add Line Item</button>
+
+      {error && <div style={{ fontSize:12, color:"#DC2626", marginBottom:14 }}>{error}</div>}
+
+      <div style={{ background:"var(--bg-subtle)", borderRadius:8, padding:"14px 18px", marginBottom:20 }}>
+        <div style={{ display:"flex", justifyContent:"space-between", fontSize:13, color:"var(--text-secondary)", marginBottom:6 }}><span>Subtotal</span><span>${subtotal.toFixed(2)}</span></div>
+        <div style={{ display:"flex", justifyContent:"space-between", fontSize:13, color:"var(--text-secondary)", marginBottom:6 }}><span>Tax ({taxRate}%)</span><span>${taxAmount.toFixed(2)}</span></div>
+        <div style={{ display:"flex", justifyContent:"space-between", fontSize:16, fontWeight:900, color:"var(--text-primary)", paddingTop:8, borderTop:"1px solid var(--border-strong)" }}><span>Total</span><span>${total.toFixed(2)}</span></div>
+      </div>
+
+      <div style={{ marginBottom:20 }}>
+        <label style={{ display:"block", fontSize:12, fontWeight:700, color:"var(--text-secondary)", marginBottom:5, textTransform:"uppercase", letterSpacing:0.5 }}>Notes / Payment Terms</label>
+        <textarea value={notes} onChange={e=>setNotes(e.target.value)} rows={3} placeholder="e.g. Payment due within 14 days of invoice date."
+          style={{ width:"100%", border:"1.5px solid var(--border-strong)", borderRadius:8, padding:"9px 12px", fontSize:14, background:"var(--bg-subtle)", boxSizing:"border-box", resize:"vertical", outline:"none", color:"var(--text-primary)", fontFamily:"'Inter',system-ui,sans-serif" }}/>
+      </div>
+
+      <div style={{ display:"flex", gap:10, justifyContent:"flex-end" }}>
+        <Btn variant="secondary" onClick={onClose}>Cancel</Btn>
+        <Btn onClick={handleSave}>{editingInvoice ? "Save Changes" : "Create Invoice"}</Btn>
+      </div>
+    </Modal>
+  );
+}
+
+function InvoicePrintView({ invoice, job, customer, company, settings, onClose }) {
+  const footerNote = settings?.invoiceFooterNote || "Thank you for your business.";
+
+  const handleEmailInvoice = async () => {
+    await downloadElementAsPDF("invoice-print-area", `${invoice.invoiceNumber}.pdf`);
+    const email = customer?.email || "";
+    const subject = encodeURIComponent(`Invoice ${invoice.invoiceNumber} from ${company?.name || ""}`);
+    const body = encodeURIComponent(`Hi ${customer?.contactPerson || customer?.name || ""},\n\nPlease find attached invoice ${invoice.invoiceNumber} for $${invoice.total.toFixed(2)}, due ${formatDate(invoice.dueDate)}.\n\nThe PDF has just been downloaded to your computer — please attach it to this email before sending.\n\nThanks,\n${company?.name || ""}`);
+    window.location.href = `mailto:${email}?subject=${subject}&body=${body}`;
+  };
+
+  return (
+    <div style={{ position:"fixed", inset:0, background:"#5C6B82", zIndex:3000, overflowY:"auto" }}>
+      <style>{`
+        @page { size: A4; margin: 0; }
+        @media print {
+          html, body { width: 210mm; height: 297mm; }
+          body * { visibility: hidden; }
+          #invoice-print-area, #invoice-print-area * { visibility: visible; }
+          #invoice-print-area {
+            position: absolute; top: 0; left: 0;
+            width: 210mm; min-height: 297mm; max-width: none;
+            margin: 0; box-shadow: none;
+            background: #fff !important; color: #1C2333 !important;
+          }
+          .no-print { display: none !important; }
+        }
+      `}</style>
+      <div className="no-print" style={{ position:"sticky", top:0, background:"#1C2333", padding:"14px 24px", display:"flex", justifyContent:"space-between", alignItems:"center", zIndex:10 }}>
+        <span style={{ color:"#fff", fontWeight:700, fontSize:14 }}>Invoice {invoice.invoiceNumber}</span>
+        <div style={{ display:"flex", gap:10 }}>
+          <Btn onClick={()=>window.print()}>🖨 Print</Btn>
+          <Btn variant="secondary" onClick={()=>downloadElementAsPDF("invoice-print-area", `${invoice.invoiceNumber}.pdf`)}>⬇ Save as PDF</Btn>
+          <Btn variant="secondary" onClick={handleEmailInvoice}>✉ Email Invoice</Btn>
+          <Btn variant="secondary" onClick={onClose}>Close</Btn>
+        </div>
+      </div>
+      <div id="invoice-print-area" style={{ background:"#fff", width:"210mm", minHeight:"297mm", margin:"30px auto", padding:"18mm 16mm", boxSizing:"border-box", boxShadow:"0 4px 24px #00000030", fontFamily:"'Inter',system-ui,sans-serif", color:"#1C2333" }}>
+        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:36, paddingBottom:24, borderBottom:"2px solid #1C2333" }}>
+          <div>
+            <div style={{ fontSize:22, fontWeight:900 }}>{company?.name || "Your Company Name"}</div>
+            {company?.address && <div style={{ fontSize:12, color:"#5C6B82", marginTop:6, whiteSpace:"pre-line" }}>{company.address}</div>}
+            {company?.phone && <div style={{ fontSize:12, color:"#5C6B82", marginTop:2 }}>{company.phone}</div>}
+            {company?.email && <div style={{ fontSize:12, color:"#5C6B82" }}>{company.email}</div>}
+            {company?.abn && <div style={{ fontSize:12, color:"#5C6B82", marginTop:2 }}>GST No. {company.abn}</div>}
+          </div>
+          <div style={{ textAlign:"right" }}>
+            <div style={{ fontSize:26, fontWeight:900, letterSpacing:1 }}>INVOICE</div>
+            <div style={{ fontSize:14, fontWeight:700, color:"#7A8A00", marginTop:6 }}>{invoice.invoiceNumber}</div>
+            <div style={{ fontSize:12, color:"#9CA3AF", marginTop:2 }}>Issued: {formatDate(invoice.issueDate)}</div>
+            <div style={{ fontSize:12, color:"#9CA3AF" }}>Due: {formatDate(invoice.dueDate)}</div>
+          </div>
+        </div>
+
+        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:24, marginBottom:32 }}>
+          <div>
+            <div style={{ fontSize:11, fontWeight:700, color:"#9CA3AF", textTransform:"uppercase", letterSpacing:0.5, marginBottom:8 }}>Bill To</div>
+            <div style={{ fontSize:14, fontWeight:700 }}>{customer?.name || invoice.customerName || "—"}</div>
+            {customer?.contactPerson && <div style={{ fontSize:13, color:"#5C6B82", marginTop:3 }}>Attn: {customer.contactPerson}</div>}
+            {customer?.address && <div style={{ fontSize:12, color:"#9CA3AF", marginTop:6, whiteSpace:"pre-line" }}>{customer.address}</div>}
+            {customer?.email && <div style={{ fontSize:13, color:"#5C6B82", marginTop:3 }}>{customer.email}</div>}
+          </div>
+          <div>
+            <div style={{ fontSize:11, fontWeight:700, color:"#9CA3AF", textTransform:"uppercase", letterSpacing:0.5, marginBottom:8 }}>Job Reference</div>
+            <div style={{ fontSize:14, fontWeight:700 }}>{invoice.jobId || "—"}</div>
+            {job?.title && <div style={{ fontSize:13, color:"#5C6B82", marginTop:3 }}>{job.title}</div>}
+          </div>
+        </div>
+
+        <table style={{ borderCollapse:"collapse", width:"100%", fontSize:13, marginBottom:20 }}>
+          <thead>
+            <tr style={{ background:"#F8FAFC" }}>
+              <th style={{ padding:"8px 10px", textAlign:"left", fontWeight:700, color:"#5C6B82", borderBottom:"1px solid #E5EAF0", fontSize:11, textTransform:"uppercase" }}>Description</th>
+              <th style={{ padding:"8px 10px", textAlign:"right", fontWeight:700, color:"#5C6B82", borderBottom:"1px solid #E5EAF0", fontSize:11, textTransform:"uppercase" }}>Qty</th>
+              <th style={{ padding:"8px 10px", textAlign:"right", fontWeight:700, color:"#5C6B82", borderBottom:"1px solid #E5EAF0", fontSize:11, textTransform:"uppercase" }}>Rate</th>
+              <th style={{ padding:"8px 10px", textAlign:"right", fontWeight:700, color:"#5C6B82", borderBottom:"1px solid #E5EAF0", fontSize:11, textTransform:"uppercase" }}>Amount</th>
+            </tr>
+          </thead>
+          <tbody>
+            {invoice.lineItems.map(l => (
+              <tr key={l.id} style={{ borderBottom:"1px solid #F1F4F8" }}>
+                <td style={{ padding:"8px 10px" }}>{l.description}</td>
+                <td style={{ padding:"8px 10px", textAlign:"right", color:"#5C6B82" }}>{l.quantity}</td>
+                <td style={{ padding:"8px 10px", textAlign:"right", color:"#5C6B82" }}>${Number(l.unitPrice).toFixed(2)}</td>
+                <td style={{ padding:"8px 10px", textAlign:"right", fontWeight:600 }}>${(l.quantity*l.unitPrice).toFixed(2)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+
+        <div style={{ display:"flex", justifyContent:"flex-end", marginBottom:32 }}>
+          <div style={{ width:240 }}>
+            <div style={{ display:"flex", justifyContent:"space-between", fontSize:13, color:"#5C6B82", padding:"4px 0" }}><span>Subtotal</span><span>${invoice.subtotal.toFixed(2)}</span></div>
+            <div style={{ display:"flex", justifyContent:"space-between", fontSize:13, color:"#5C6B82", padding:"4px 0" }}><span>Tax ({invoice.taxRate}%)</span><span>${invoice.taxAmount.toFixed(2)}</span></div>
+            <div style={{ display:"flex", justifyContent:"space-between", fontSize:16, fontWeight:900, padding:"10px 0", marginTop:6, borderTop:"2px solid #1C2333" }}><span>Total Due</span><span>${invoice.total.toFixed(2)}</span></div>
+          </div>
+        </div>
+
+        {invoice.notes && (
+          <div style={{ marginBottom:32 }}>
+            <div style={{ fontSize:11, fontWeight:700, color:"#9CA3AF", textTransform:"uppercase", letterSpacing:0.5, marginBottom:8 }}>Notes</div>
+            <div style={{ fontSize:12, color:"#5C6B82", lineHeight:1.6, whiteSpace:"pre-line" }}>{invoice.notes}</div>
+          </div>
+        )}
+
+        <div style={{ marginTop:40, paddingTop:16, borderTop:"1px solid #E5EAF0", fontSize:11, color:"#C4CAD4", textAlign:"center" }}>
+          {footerNote}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function InvoicesView({ jobs, customers, invoices, setInvoices, staff, roles, timeEntries, purchaseOrders, company, settings, onOpenJob }) {
+  const [search, setSearch] = useState("");
+  const [pickingJob, setPickingJob] = useState(false);
+  const [buildingForJob, setBuildingForJob] = useState(null);
+  const [editingInvoice, setEditingInvoice] = useState(null);
+  const [printingInvoice, setPrintingInvoice] = useState(null);
+  const [statusInvoice, setStatusInvoice] = useState(null);
+  const [deletingInvoice, setDeletingInvoice] = useState(null);
+
+  const rows = invoices
+    .map(inv => ({ invoice: inv, job: jobs.find(j=>j.id===inv.jobId), customer: customers.find(c=>c.name===inv.customerName) }))
+    .filter(({ invoice, job }) => {
+      if (!search) return true;
+      const q = search.toLowerCase();
+      return invoice.invoiceNumber.toLowerCase().includes(q) || (invoice.customerName||"").toLowerCase().includes(q) || (job?.id||"").toLowerCase().includes(q) || (job?.title||"").toLowerCase().includes(q);
+    })
+    .sort((a,b) => a.invoice.issueDate < b.invoice.issueDate ? 1 : -1);
+
+  const saveInvoice = (inv) => {
+    setInvoices(prev => {
+      const idx = prev.findIndex(i => i.id === inv.id);
+      if (idx >= 0) { const next = [...prev]; next[idx] = inv; return next; }
+      return [inv, ...prev];
+    });
+    setBuildingForJob(null);
+    setEditingInvoice(null);
+  };
+  const updateInvoiceStatus = (inv) => { setInvoices(prev => prev.map(i => i.id===inv.id ? inv : i)); setStatusInvoice(null); };
+  const deleteInvoice = (id) => { setInvoices(prev => prev.filter(i => i.id !== id)); setDeletingInvoice(null); };
+
+  return (
+    <div>
+      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:20 }}>
+        <div>
+          <h1 style={{ fontSize:24, fontWeight:900, color:"var(--text-primary)", margin:"0 0 4px" }}>Invoices</h1>
+          <p style={{ color:"var(--text-secondary)", fontSize:14, margin:0 }}>{invoices.length} invoice{invoices.length!==1?"s":""} created</p>
+        </div>
+        <Btn onClick={()=>setPickingJob(true)}>+ Create Invoice</Btn>
+      </div>
+
+      <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search invoice number, customer, or job..." style={{ width:"100%", border:"1.5px solid var(--border-strong)", borderRadius:8, padding:"9px 14px", fontSize:14, outline:"none", background:"var(--card-bg)", color:"var(--text-primary)", boxSizing:"border-box", marginBottom:18 }} />
+
+      <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
+        {rows.map(({ invoice, job, customer }) => (
+          <div key={invoice.id} style={{ background:"var(--card-bg)", borderRadius:12, padding:"14px 18px", boxShadow:"0 1px 4px #1C233310", display:"flex", alignItems:"center", gap:16 }}>
+            <div style={{ minWidth:100 }}>
+              <div style={{ fontSize:13, fontWeight:800, color:ACCENT_TEXT }}>{invoice.invoiceNumber}</div>
+              <div style={{ fontSize:11, color:"var(--text-muted)", marginTop:2 }}>{formatDate(invoice.issueDate)}</div>
+            </div>
+            <div style={{ flex:1 }}>
+              <div style={{ fontSize:13, fontWeight:700, color:"var(--text-primary)" }}>{invoice.customerName || "Unknown customer"}</div>
+              {job && <button onClick={()=>onOpenJob(job)} style={{ background:"none", border:"none", padding:0, cursor:"pointer", fontSize:11, color:"var(--text-secondary)", textAlign:"left" }}>{job.id} — {job.title.slice(0,40)}</button>}
+            </div>
+            <div style={{ minWidth:90, textAlign:"right", fontSize:14, fontWeight:800, color:"var(--text-primary)" }}>${invoice.total.toFixed(2)}</div>
+            <InvoiceStatusBadge invoice={invoice} onClick={()=>setStatusInvoice(invoice)} />
+            <Btn variant="secondary" onClick={()=>setPrintingInvoice(invoice)}>View / Print</Btn>
+            <Btn variant="secondary" onClick={()=>setEditingInvoice(invoice)}>Edit</Btn>
+            <Btn variant="danger" onClick={()=>setDeletingInvoice(invoice)}>Delete</Btn>
+          </div>
+        ))}
+        {rows.length===0 && <div style={{ textAlign:"center", color:"var(--text-muted)", padding:40, fontSize:14, background:"var(--card-bg)", borderRadius:12 }}>No invoices yet.</div>}
+      </div>
+
+      {pickingJob && (
+        <JobPickerModal jobs={jobs} onClose={()=>setPickingJob(false)} onSelect={(j)=>{ setPickingJob(false); setBuildingForJob(j); }} />
+      )}
+      {buildingForJob && (
+        <InvoiceBuilderModal job={buildingForJob} staff={staff} roles={roles} customers={customers} timeEntries={timeEntries} purchaseOrders={purchaseOrders} invoices={invoices} settings={settings} onSave={saveInvoice} onClose={()=>setBuildingForJob(null)} />
+      )}
+      {editingInvoice && (
+        <InvoiceBuilderModal job={jobs.find(j=>j.id===editingInvoice.jobId) || { id: editingInvoice.jobId, client: editingInvoice.customerName, jobCosts:[] }} staff={staff} roles={roles} customers={customers} timeEntries={timeEntries} purchaseOrders={purchaseOrders} invoices={invoices} settings={settings} editingInvoice={editingInvoice} onSave={saveInvoice} onClose={()=>setEditingInvoice(null)} />
+      )}
+      {printingInvoice && (
+        <InvoicePrintView invoice={printingInvoice} job={jobs.find(j=>j.id===printingInvoice.jobId)} customer={customers.find(c=>c.name===printingInvoice.customerName)} company={company} settings={settings} onClose={()=>setPrintingInvoice(null)} />
+      )}
+      {statusInvoice && (
+        <InvoiceStatusModal invoice={statusInvoice} onSave={updateInvoiceStatus} onClose={()=>setStatusInvoice(null)} />
+      )}
+      {deletingInvoice && (
+        <Modal title={`Delete ${deletingInvoice.invoiceNumber}?`} onClose={()=>setDeletingInvoice(null)}>
+          <div style={{ background:"#FEF2F2", border:"1.5px solid #FCA5A5", borderRadius:8, padding:16 }}>
+            <div style={{ fontSize:14, fontWeight:700, color:"#991B1B", marginBottom:6 }}>This can't be undone.</div>
+            <div style={{ fontSize:13, color:"#7F1D1D", marginBottom:16 }}>{deletingInvoice.invoiceNumber} will be permanently deleted.</div>
+            <div style={{ display:"flex", gap:10, justifyContent:"flex-end" }}>
+              <Btn variant="secondary" onClick={()=>setDeletingInvoice(null)}>Cancel</Btn>
+              <Btn variant="danger" onClick={()=>deleteInvoice(deletingInvoice.id)}>Yes, Delete</Btn>
+            </div>
+          </div>
+        </Modal>
+      )}
+    </div>
+  );
+}
+
+function SettingsInvoicesPage({ settings, setSettings }) {
+  const [draft, setDraft] = useState({ invoiceFooterNote: settings.invoiceFooterNote, invoiceTerms: settings.invoiceTerms, invoiceTaxRate: settings.invoiceTaxRate ?? 15, invoiceNumberPrefix: settings.invoiceNumberPrefix || "INV" });
+  const [saved, setSaved] = useState(false);
+  const set = (k,v) => { setDraft(p=>({...p,[k]:v})); setSaved(false); };
+  const handleSave = () => { setSettings(p=>({ ...p, ...draft })); setSaved(true); setTimeout(()=>setSaved(false), 2500); };
+
+  return (
+    <div>
+      <div style={{ background:"var(--card-bg)", borderRadius:14, padding:24, boxShadow:"0 1px 4px #1C233310", maxWidth:560 }}>
+        <h2 style={{ fontSize:15, fontWeight:800, color:"var(--text-primary)", margin:"0 0 4px" }}>Invoice Template</h2>
+        <p style={{ fontSize:12, color:"var(--text-muted)", margin:"0 0 16px" }}>These defaults apply to every new invoice — you can still adjust anything per-invoice.</p>
+        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0 16px" }}>
+          <Inp label="Invoice Number Prefix" value={draft.invoiceNumberPrefix} onChange={e=>set("invoiceNumberPrefix",e.target.value)} placeholder="e.g. INV" />
+          <Inp label="Tax Rate (%)" type="number" step="0.1" min="0" value={draft.invoiceTaxRate} onChange={e=>set("invoiceTaxRate",parseFloat(e.target.value)||0)} placeholder="e.g. 15" />
+        </div>
+        <div style={{ marginBottom:14 }}>
+          <label style={{ display:"block", fontSize:12, fontWeight:700, color:"var(--text-secondary)", marginBottom:5, textTransform:"uppercase", letterSpacing:0.5 }}>Default Notes / Payment Terms</label>
+          <textarea value={draft.invoiceTerms} onChange={e=>set("invoiceTerms",e.target.value)} rows={3} placeholder="e.g. Payment due within 14 days of invoice date." style={{ width:"100%", border:"1.5px solid var(--border-strong)", borderRadius:8, padding:"9px 12px", fontSize:14, background:"var(--bg-subtle)", boxSizing:"border-box", resize:"vertical", outline:"none", color:"var(--text-primary)", fontFamily:"'Inter',system-ui,sans-serif" }}/>
+        </div>
+        <div style={{ marginBottom:6 }}>
+          <label style={{ display:"block", fontSize:12, fontWeight:700, color:"var(--text-secondary)", marginBottom:5, textTransform:"uppercase", letterSpacing:0.5 }}>Footer Note</label>
+          <input value={draft.invoiceFooterNote} onChange={e=>set("invoiceFooterNote",e.target.value)} placeholder="e.g. Thank you for your business." style={{ width:"100%", border:"1.5px solid var(--border-strong)", borderRadius:8, padding:"9px 12px", fontSize:14, background:"var(--bg-subtle)", boxSizing:"border-box", outline:"none", color:"var(--text-primary)" }} />
+        </div>
+        <div style={{ display:"flex", alignItems:"center", gap:12, marginTop:14 }}>
+          <Btn onClick={handleSave}>Save Invoice Settings</Btn>
+          {saved && <span style={{ fontSize:12, fontWeight:700, color:"#10B981" }}>✓ Saved</span>}
+        </div>
+      </div>
+    </div>
+  );
+}
 export default function App() {
     const [tab, setTab] = useState("dashboard");
 
@@ -4006,6 +4405,7 @@ export default function App() {
     const [suppliers, setSuppliers, setSuppliersSilently] = useSyncedTable("suppliers", contactMap, showSyncError);
     const [timeEntries, setTimeEntries, setTimeEntriesSilently] = useSyncedTable("time_entries", timeEntryMap, showSyncError);
     const [purchaseOrders, setPurchaseOrders, setPurchaseOrdersSilently] = useSyncedTable("purchase_orders", poMap, showSyncError);
+      const [invoices, setInvoices, setInvoicesSilently] = useSyncedTable("invoices", invoiceMap, showSyncError);
     const [company, setCompany, setCompanySilently] = useSyncedSingleton("company", companyMap, INITIAL_COMPANY, showSyncError);
     const [settings, setSettings, setSettingsSilently] = useSyncedSingleton("settings", settingsMap, INITIAL_SETTINGS, showSyncError);
     const [schedulerDataObj, setSchedulerDataObj, setSchedulerDataObjSilently] = useSyncedSingleton("scheduler_data", schedulerDataMap, { scheduleData: {} }, showSyncError);
@@ -4063,6 +4463,7 @@ export default function App() {
                 if (data.settings) setSettingsSilently(data.settings);
                 if (data.schedulerData) setSchedulerDataObjSilently(data.schedulerData);
                 if (data.offsiteTracker) setOffsiteTrackerSilently(data.offsiteTracker);
+                        setInvoicesSilently(data.invoices);
             } catch (err) {
                 if (!cancelled) setDataError(err.message || "Something went wrong loading your data.");
             } finally {
@@ -4210,8 +4611,7 @@ export default function App() {
             {tab==="timesheets"&& <TimesheetsView jobs={jobs} staff={staff} roles={roles} timeEntries={timeEntries} setTimeEntries={setTimeEntries} settings={settings}/>}
             {tab==="purchaseorders" && <PurchaseOrdersView jobs={jobs} staff={staff} customers={customers} suppliers={suppliers} purchaseOrders={purchaseOrders} setPurchaseOrders={setPurchaseOrders} company={company} settings={settings} onOpenJob={j=>openJob(j.id)}/>}
             {tab==="quotes"    && <ComingSoonView title="Quotes" description="Send customers a priced quote before the work begins." icon="▧"/>}
-            {tab==="invoices"  && <ComingSoonView title="Invoices" description="Bill customers for completed work using charge-out rates." icon="▥"/>}
-            {tab==="bills"     && <ComingSoonView title="Bills" description="Track what you owe suppliers for purchase orders and materials." icon="▨"/>}
+            {tab==="invoices"  && <InvoicesView jobs={jobs} customers={customers} invoices={invoices} setInvoices={setInvoices} staff={staff} roles={roles} timeEntries={timeEntries} purchaseOrders={purchaseOrders} company={company} settings={settings} onOpenJob={j=>openJob(j.id)}/>}            {tab==="bills"     && <ComingSoonView title="Bills" description="Track what you owe suppliers for purchase orders and materials." icon="▨"/>}
                           {tab === "offsite" && <OffsiteView cols={offsiteTracker.cols} setCols={setOffsiteCols} data={offsiteTracker.data} setData={setOffsiteData} allocated={offsiteTracker.allocated} setAllocated={setOffsiteAllocated} />}
             {tab==="assets"    && <AssetsView assets={assets} setAssets={setAssets} groups={assetGroups} setGroups={setAssetGroups} staff={staff} settings={settings} setSettings={setSettings}/>}
             {tab==="contacts"  && <ContactsView customers={customers} setCustomers={setCustomers} suppliers={suppliers} setSuppliers={setSuppliers} company={company} setCompany={setCompany}/>}
