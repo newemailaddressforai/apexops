@@ -2256,18 +2256,6 @@ function SettingsJobsPage({ settings, setSettings, jobs, onImport }) {
       {editingJobSheet && (
         <JobSheetTemplateModal settings={settings} setSettings={setSettings} onClose={()=>setEditingJobSheet(false)} />
           )}
-          <div style={{ background: "var(--card-bg)", borderRadius: 14, padding: 24, boxShadow: "0 1px 4px #1C233310", maxWidth: 560, marginTop: 20 }}>
-              <h2 style={{ fontSize: 15, fontWeight: 800, color: "var(--text-primary)", margin: "0 0 4px" }}>Status Visibility</h2>
-              <p style={{ fontSize: 12, color: "var(--text-muted)", margin: "0 0 16px" }}>Choose which job statuses count toward the Dashboard's totals, breakdown, and workload. This doesn't affect the Jobs page.</p>
-              <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                  {Object.entries(STATUS_META).map(([key, meta]) => (
-                      <div key={key} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "9px 4px", borderBottom: "1px solid var(--border)" }}>
-                          <span style={{ fontSize: 13, fontWeight: 600, color: "var(--text-primary)" }}>{meta.label}</span>
-                          <ToggleSwitch on={visibleStatuses[key] !== false} onClick={() => toggleStatus(key)} />
-                      </div>
-                  ))}
-              </div>
-          </div>
     </div>
   );
 }
@@ -2417,12 +2405,25 @@ function SettingsDashboardPage({ settings, setSettings, staff }) {
                             <ToggleSwitch on={selected.includes(s.id)} onClick={() => toggleStaffMember(s.id)} />
                         </div>
                     ))}
-                    {staff.length === 0 && <div style={{ fontSize: 12, color: "var(--text-muted)" }}>No team members yet.</div>}
-                </div>
-            </div>
+                                {staff.length === 0 && <div style={{ fontSize: 12, color: "var(--text-muted)" }}>No team members yet.</div>}
+          </div>
         </div>
+
+        <div style={{ background:"var(--card-bg)", borderRadius:14, padding:24, boxShadow:"0 1px 4px #1C233310", maxWidth:560, marginTop:20 }}>
+          <h2 style={{ fontSize:15, fontWeight:800, color:"var(--text-primary)", margin:"0 0 4px" }}>Status Visibility</h2>
+          <p style={{ fontSize:12, color:"var(--text-muted)", margin:"0 0 16px" }}>Choose which job statuses count toward the Dashboard's totals, breakdown, and workload. This doesn't affect the Jobs page.</p>
+          <div style={{ display:"flex", flexDirection:"column", gap:4 }}>
+            {Object.entries(STATUS_META).map(([key, meta]) => (
+              <div key={key} style={{ display:"flex", alignItems:"center", justifyContent:"space-between", padding:"9px 4px", borderBottom:"1px solid var(--border)" }}>
+                <span style={{ fontSize:13, fontWeight:600, color:"var(--text-primary)" }}>{meta.label}</span>
+                <ToggleSwitch on={visibleStatuses[key] !== false} onClick={()=>toggleStatus(key)} />
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
     );
-}
+  }
 function StaffVisibilityPicker({ staff, selectedIds, onToggle, onShowAll }) {
     const selected = selectedIds && selectedIds.length ? selectedIds : staff.map(s => s.id);
     const allSelected = selected.length === staff.length;
@@ -4206,7 +4207,6 @@ export default function App() {
             {tab==="onhold"    && <OnHoldView jobs={jobs} staff={staff} onEdit={j=>openJob(j.id)} onBack={()=>setTab("dashboard")}/>}
                           {tab === "schedule" && <SchedulerView jobs={jobs} staff={staff} roles={roles} settings={settings} scheduleData={schedulerDataObj.scheduleData} setScheduleData={setScheduleData} />}
                           {tab === "followup" && <FollowUpView jobs={jobs} staff={staff} onEdit={j => openJob(j.id)} onBack={() => setTab("dashboard")} />}
-                          {tab === "schedule" && <SchedulerView jobs={jobs} staff={staff} roles={roles} scheduleData={schedulerDataObj.scheduleData} setScheduleData={setScheduleData} />}
             {tab==="timesheets"&& <TimesheetsView jobs={jobs} staff={staff} roles={roles} timeEntries={timeEntries} setTimeEntries={setTimeEntries} settings={settings}/>}
             {tab==="purchaseorders" && <PurchaseOrdersView jobs={jobs} staff={staff} customers={customers} suppliers={suppliers} purchaseOrders={purchaseOrders} setPurchaseOrders={setPurchaseOrders} company={company} settings={settings} onOpenJob={j=>openJob(j.id)}/>}
             {tab==="quotes"    && <ComingSoonView title="Quotes" description="Send customers a priced quote before the work begins." icon="▧"/>}
