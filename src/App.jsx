@@ -3722,8 +3722,7 @@ function JobCostsPage({ job, suppliers, purchaseOrders, setPurchaseOrders, setJo
     );
 }
 
-function JobDetailPage({ job, staff, roles, customers, suppliers, timeEntries, purchaseOrders, setPurchaseOrders, company, settings, onSave, onBack, onDelete, onOpenNotes, onOpenTime, onOpenCosts }) {
-  const isNew = !job;
+function JobDetailPage({ job, staff, roles, customers, suppliers, timeEntries, purchaseOrders, setPurchaseOrders, invoices, company, settings, onSave, onBack, onDelete, onOpenNotes, onOpenTime, onOpenCosts, onOpenInvoices }) {  const isNew = !job;
   const [form, setForm] = useState(job || { id:uid(), title:"", client:"", workOrderNo:"", orderNo:"", status:"not-started", assignedTo:[], holdReason:"", holdSince:null, followUpNote:"", followUpSince:null, notes:"", customFields:{}, jobNotes:[], jobCosts:[] });
   const [error, setError] = useState("");
   const [confirmingDelete, setConfirmingDelete] = useState(false);
@@ -3741,14 +3740,16 @@ function JobDetailPage({ job, staff, roles, customers, suppliers, timeEntries, p
     onSave(saved);
   };
 
-  const jobTimeEntries = isNew ? [] : (timeEntries||[]).filter(t=>t.jobId===job.id);
-  const totalHours = jobTimeEntries.reduce((s,t)=>s+t.hours,0);
-  const totalCost = jobTimeEntries.reduce((s,t)=>{ const rate = getRoleRates(staff.find(st=>st.id===t.staffId)?.roleId, roles).costRate; return s + t.hours*rate; },0);
-  const jobPOs = isNew ? [] : (purchaseOrders||[]).filter(p=>p.jobId===job.id);
-  const jobNoteCount = isNew ? 0 : (job.jobNotes||[]).length;
-  const billedPOTotal = jobPOs.filter(po=>po.status==="billed").reduce((s,po)=>s+(po.billedCost||0),0);
-  const additionalCostTotal = isNew ? 0 : (job.jobCosts||[]).reduce((s,c)=>s+c.amount,0);
-  const totalCosts = billedPOTotal + additionalCostTotal;
+      const jobTimeEntries = isNew ? [] : (timeEntries||[]).filter(t=>t.jobId===job.id);
+    const totalHours = jobTimeEntries.reduce((s,t)=>s+t.hours,0);
+    const totalCost = jobTimeEntries.reduce((s,t)=>{ const rate = getRoleRates(staff.find(st=>st.id===t.staffId)?.roleId, roles).costRate; return s + t.hours*rate; },0);
+    const jobPOs = isNew ? [] : (purchaseOrders||[]).filter(p=>p.jobId===job.id);
+    const jobInvoices = isNew ? [] : (invoices||[]).filter(i=>i.jobId===job.id);
+    const jobInvoicesTotal = jobInvoices.reduce((s,i)=>s+i.total,0);
+    const jobNoteCount = isNew ? 0 : (job.jobNotes||[]).length;
+    const billedPOTotal = jobPOs.filter(po=>po.status==="billed").reduce((s,po)=>s+(po.billedCost||0),0);
+    const additionalCostTotal = isNew ? 0 : (job.jobCosts||[]).reduce((s,c)=>s+c.amount,0);
+    const totalCosts = billedPOTotal + additionalCostTotal;
 
   return (
     <div style={{ maxWidth: 860 }}>
@@ -3838,21 +3839,26 @@ function JobDetailPage({ job, staff, roles, customers, suppliers, timeEntries, p
             )}
 
             {/* Sub-pages: Time Allocated / Notes & Photos / Costs, each opens its own page */}
-            {!isNew && (
-              <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:12, marginBottom:20 }}>
-                <button onClick={onOpenTime} style={{ textAlign:"left", background:"var(--bg-subtle)", border:"1px solid var(--border)", borderRadius:10, padding:"14px 16px", cursor:"pointer" }}>
-                  <div style={{ fontSize:11, fontWeight:700, color:"var(--text-muted)", textTransform:"uppercase", letterSpacing:0.5, marginBottom:6 }}>⏱ Time Allocated</div>
-                  <div style={{ fontSize:16, fontWeight:800, color:"var(--text-primary)" }}>{totalHours}h</div>
-                  <div style={{ fontSize:12, color:"#065F46", fontWeight:600, marginTop:2 }}>${totalCost.toFixed(2)}</div>
+                        {!isNew && (
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 12, marginBottom: 20 }}>
+                <button onClick={onOpenTime} style={{ textAlign: "left", background: "var(--bg-subtle)", border: "1px solid var(--border)", borderRadius: 10, padding: "14px 16px", cursor: "pointer" }}>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 6 }}>⏱ Time Allocated</div>
+                  <div style={{ fontSize: 16, fontWeight: 800, color: "var(--text-primary)" }}>{totalHours}h</div>
+                  <div style={{ fontSize: 12, color: "#065F46", fontWeight: 600, marginTop: 2 }}>${totalCost.toFixed(2)}</div>
                 </button>
-                <button onClick={onOpenNotes} style={{ textAlign:"left", background:"var(--bg-subtle)", border:"1px solid var(--border)", borderRadius:10, padding:"14px 16px", cursor:"pointer" }}>
-                  <div style={{ fontSize:11, fontWeight:700, color:"var(--text-muted)", textTransform:"uppercase", letterSpacing:0.5, marginBottom:6 }}>📝 Notes & Photos</div>
-                  <div style={{ fontSize:16, fontWeight:800, color:"var(--text-primary)" }}>{jobNoteCount} note{jobNoteCount!==1?"s":""}</div>
+                <button onClick={onOpenNotes} style={{ textAlign: "left", background: "var(--bg-subtle)", border: "1px solid var(--border)", borderRadius: 10, padding: "14px 16px", cursor: "pointer" }}>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 6 }}>📝 Notes & Photos</div>
+                  <div style={{ fontSize: 16, fontWeight: 800, color: "var(--text-primary)" }}>{jobNoteCount} note{jobNoteCount!==1?"s":""}</div>
                 </button>
-                <button onClick={onOpenCosts} style={{ textAlign:"left", background:"var(--bg-subtle)", border:"1px solid var(--border)", borderRadius:10, padding:"14px 16px", cursor:"pointer" }}>
-                  <div style={{ fontSize:11, fontWeight:700, color:"var(--text-muted)", textTransform:"uppercase", letterSpacing:0.5, marginBottom:6 }}>🧾 Costs</div>
-                  <div style={{ fontSize:16, fontWeight:800, color:"var(--text-primary)" }}>${totalCosts.toFixed(2)}</div>
-                  <div style={{ fontSize:12, color:"var(--text-muted)", marginTop:2 }}>{jobPOs.length} PO{jobPOs.length!==1?"s":""}</div>
+                <button onClick={onOpenCosts} style={{ textAlign: "left", background: "var(--bg-subtle)", border: "1px solid var(--border)", borderRadius: 10, padding: "14px 16px", cursor: "pointer" }}>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 6 }}>🧾 Costs</div>
+                  <div style={{ fontSize: 16, fontWeight: 800, color: "var(--text-primary)" }}>${totalCosts.toFixed(2)}</div>
+                  <div style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 2 }}>{jobPOs.length} PO{jobPOs.length!==1?"s":""}</div>
+                </button>
+                <button onClick={onOpenInvoices} style={{ textAlign: "left", background: "var(--bg-subtle)", border: "1px solid var(--border)", borderRadius: 10, padding: "14px 16px", cursor: "pointer" }}>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 6 }}>📄 Invoices</div>
+                  <div style={{ fontSize: 16, fontWeight: 800, color: "var(--text-primary)" }}>{jobInvoices.length} invoice{jobInvoices.length!==1?"s":""}</div>
+                  {jobInvoices.length > 0 && <div style={{ fontSize: 12, color: "#065F46", fontWeight: 600, marginTop: 2 }}>${jobInvoicesTotal.toFixed(2)}</div>}
                 </button>
               </div>
             )}
@@ -4385,6 +4391,86 @@ function SettingsInvoicesPage({ settings, setSettings }) {
     </div>
   );
 }
+function JobInvoicesPage({ job, staff, roles, customers, timeEntries, purchaseOrders, invoices, setInvoices, company, settings, onBack }) {
+  const [building, setBuilding] = useState(false);
+  const [editingInvoice, setEditingInvoice] = useState(null);
+  const [printingInvoice, setPrintingInvoice] = useState(null);
+  const [statusInvoice, setStatusInvoice] = useState(null);
+  const [deletingInvoice, setDeletingInvoice] = useState(null);
+
+  const jobInvoices = (invoices||[]).filter(i=>i.jobId===job.id).sort((a,b)=> a.issueDate<b.issueDate?1:-1);
+
+  const saveInvoice = (inv) => {
+    setInvoices(prev => {
+      const idx = prev.findIndex(i => i.id === inv.id);
+      if (idx >= 0) { const next = [...prev]; next[idx] = inv; return next; }
+      return [inv, ...prev];
+    });
+    setBuilding(false);
+    setEditingInvoice(null);
+  };
+  const updateInvoiceStatus = (inv) => { setInvoices(prev => prev.map(i => i.id===inv.id ? inv : i)); setStatusInvoice(null); };
+  const deleteInvoice = (id) => { setInvoices(prev => prev.filter(i => i.id !== id)); setDeletingInvoice(null); };
+
+  return (
+    <div>
+      <button onClick={onBack} style={{ background:"none", border:"none", color:"var(--text-secondary)", fontSize:13, fontWeight:600, cursor:"pointer", padding:0, marginBottom:14, display:"flex", alignItems:"center", gap:5 }}>← Back to Job</button>
+      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:20 }}>
+        <div>
+          <h1 style={{ fontSize:24, fontWeight:900, color:"var(--text-primary)", margin:"0 0 4px" }}>Invoices</h1>
+          <p style={{ color:"var(--text-secondary)", fontSize:14, margin:0 }}>{job.id} · {job.title}</p>
+        </div>
+        <Btn onClick={()=>setBuilding(true)}>+ Create Invoice</Btn>
+      </div>
+
+      {jobInvoices.length===0 ? (
+        <div style={{ background:"var(--card-bg)", borderRadius:14, padding:40, textAlign:"center", color:"var(--text-muted)" }}>No invoices created for this job yet.</div>
+      ) : (
+        <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
+          {jobInvoices.map(inv => (
+            <div key={inv.id} style={{ background:"var(--card-bg)", borderRadius:12, padding:"14px 18px", boxShadow:"0 1px 4px #1C233310", display:"flex", alignItems:"center", gap:16 }}>
+              <div style={{ minWidth:100 }}>
+                <div style={{ fontSize:13, fontWeight:800, color:ACCENT_TEXT }}>{inv.invoiceNumber}</div>
+                <div style={{ fontSize:11, color:"var(--text-muted)", marginTop:2 }}>{formatDate(inv.issueDate)}</div>
+              </div>
+              <div style={{ flex:1, fontSize:13, color:"var(--text-secondary)" }}>Due {formatDate(inv.dueDate)}</div>
+              <div style={{ fontSize:14, fontWeight:800, color:"var(--text-primary)" }}>${inv.total.toFixed(2)}</div>
+              <InvoiceStatusBadge invoice={inv} onClick={()=>setStatusInvoice(inv)} />
+              <Btn variant="secondary" onClick={()=>setPrintingInvoice(inv)}>View / Print</Btn>
+              <Btn variant="secondary" onClick={()=>setEditingInvoice(inv)}>Edit</Btn>
+              <Btn variant="danger" onClick={()=>setDeletingInvoice(inv)}>Delete</Btn>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {building && (
+        <InvoiceBuilderModal job={job} staff={staff} roles={roles} customers={customers} timeEntries={timeEntries} purchaseOrders={purchaseOrders} invoices={invoices} settings={settings} onSave={saveInvoice} onClose={()=>setBuilding(false)} />
+      )}
+      {editingInvoice && (
+        <InvoiceBuilderModal job={job} staff={staff} roles={roles} customers={customers} timeEntries={timeEntries} purchaseOrders={purchaseOrders} invoices={invoices} settings={settings} editingInvoice={editingInvoice} onSave={saveInvoice} onClose={()=>setEditingInvoice(null)} />
+      )}
+      {printingInvoice && (
+        <InvoicePrintView invoice={printingInvoice} job={job} customer={customers.find(c=>c.name===printingInvoice.customerName)} company={company} settings={settings} onClose={()=>setPrintingInvoice(null)} />
+      )}
+      {statusInvoice && (
+        <InvoiceStatusModal invoice={statusInvoice} onSave={updateInvoiceStatus} onClose={()=>setStatusInvoice(null)} />
+      )}
+      {deletingInvoice && (
+        <Modal title={`Delete ${deletingInvoice.invoiceNumber}?`} onClose={()=>setDeletingInvoice(null)}>
+          <div style={{ background:"#FEF2F2", border:"1.5px solid #FCA5A5", borderRadius:8, padding:16 }}>
+            <div style={{ fontSize:14, fontWeight:700, color:"#991B1B", marginBottom:6 }}>This can't be undone.</div>
+            <div style={{ fontSize:13, color:"#7F1D1D", marginBottom:16 }}>{deletingInvoice.invoiceNumber} will be permanently deleted.</div>
+            <div style={{ display:"flex", gap:10, justifyContent:"flex-end" }}>
+              <Btn variant="secondary" onClick={()=>setDeletingInvoice(null)}>Cancel</Btn>
+              <Btn variant="danger" onClick={()=>deleteInvoice(deletingInvoice.id)}>Yes, Delete</Btn>
+            </div>
+          </div>
+        </Modal>
+      )}
+    </div>
+  );
+}
 export default function App() {
     const [tab, setTab] = useState("dashboard");
 
@@ -4586,10 +4672,10 @@ export default function App() {
           <div style={{ marginLeft: isMobile ? 0 : 230, marginTop: isMobile ? 56 : 0, marginBottom: isMobile ? 62 : 0, flex: 1, padding: isMobile ? 16 : 32, maxWidth: isMobile ? "100vw" : "calc(100vw - 230px)", boxSizing: "border-box" }}>
         {jobPageStack.length > 0 ? (
           <>
-            {currentJobPage.view === "detail" && (
-              <JobDetailPage job={currentJob} staff={staff} roles={roles} customers={customers} suppliers={suppliers} timeEntries={timeEntries} purchaseOrders={purchaseOrders} setPurchaseOrders={setPurchaseOrders} company={company} settings={settings}
+                        {currentJobPage.view === "detail" && (
+              <JobDetailPage job={currentJob} staff={staff} roles={roles} customers={customers} suppliers={suppliers} timeEntries={timeEntries} purchaseOrders={purchaseOrders} setPurchaseOrders={setPurchaseOrders} invoices={invoices} company={company} settings={settings}
                 onSave={saveJob} onDelete={deleteJob} onBack={closeJobArea}
-                onOpenTime={()=>pushJobSubpage("time")} onOpenNotes={()=>pushJobSubpage("notes")} onOpenCosts={()=>pushJobSubpage("costs")}/>
+                onOpenTime={()=>pushJobSubpage("time")} onOpenNotes={()=>pushJobSubpage("notes")} onOpenCosts={()=>pushJobSubpage("costs")} onOpenInvoices={()=>pushJobSubpage("invoices")}/>
             )}
             {currentJobPage.view === "time" && (
               <JobTimePage job={currentJob} staff={staff} roles={roles} timeEntries={timeEntries} onBack={popJobPage}/>
@@ -4599,6 +4685,9 @@ export default function App() {
             )}
             {currentJobPage.view === "costs" && (
               <JobCostsPage job={currentJob} suppliers={suppliers} purchaseOrders={purchaseOrders} setPurchaseOrders={setPurchaseOrders} setJobs={setJobs} company={company} settings={settings} onBack={popJobPage}/>
+            )}
+            {currentJobPage.view === "invoices" && (
+              <JobInvoicesPage job={currentJob} staff={staff} roles={roles} customers={customers} timeEntries={timeEntries} purchaseOrders={purchaseOrders} invoices={invoices} setInvoices={setInvoices} company={company} settings={settings} onBack={popJobPage}/>
             )}
           </>
         ) : (
