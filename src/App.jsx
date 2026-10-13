@@ -1,5 +1,4 @@
-import { useState, useMemo, useRef, useEffect, Fragment } from "react";
-import { supabase } from "./supabaseClient";
+import { useState, useMemo, useRef, useEffect, useLayoutEffect, Fragment } from "react";import { supabase } from "./supabaseClient";
 import { useSyncedTable, useSyncedSingleton, useSyncedJobs, fetchAllData, ensureSingletonsExist, staffMap, rolesMap, contactMap, companyMap, settingsMap, timeEntryMap, poMap, assetMap, assetGroupMap, schedulerDataMap, offsiteTrackerMap, invoiceMap } from "./db";
 import logoSidebar from "./assets/logo-sidebar.png";
 import { LoginScreen, FullScreenStatus } from "./AuthScreens";
@@ -379,6 +378,22 @@ function nextInvoiceNumber(invoices, prefix) {
   const nums = invoices.map(i => parseInt((i.invoiceNumber || "").replace(/\D/g, ""), 10)).filter(n => !isNaN(n));
   const next = (nums.length ? Math.max(...nums) : 1000) + 1;
   return `${p}-${next}`;
+}
+function nextJobNumberFromSettings(settings) {
+  const next = settings?.jobNextNumber;
+  if (!next) return "";
+  return (settings?.jobNumberPrefix || "") + next;
+}
+// After a new job is saved, works out what the counter should move to (keeps leading zeros).
+function advanceJobCounter(settings, savedId) {
+  const prefix = settings?.jobNumberPrefix || "";
+  const cur = settings?.jobNextNumber || "";
+  if (!cur || !savedId.startsWith(prefix)) return null;
+  const tail = savedId.slice(prefix.length);
+  if (!/^\d+$/.test(tail)) return null;
+  const savedNum = parseInt(tail, 10);
+  if (savedNum < parseInt(cur, 10)) return null;
+  return String(savedNum + 1).padStart(cur.length, "0");
 }
 const INVOICE_STATUS_META = {
   draft: { label: "Draft", color: "#9CA3AF" },
@@ -861,7 +876,7 @@ function JobsView({ jobs, staff, customers, settings, setSettings, initialFilter
 
   const handleExport = () => {
     const headers = ["Job ID","Work Order No","Description","Order No","Client","Status","Assigned To","Hold Reason","On Hold Since","Follow Up Note","Follow Up Since","Notes"];
-    const rows = jobs.map(j => [j.id, j.workOrderNo||"", j.title, j.orderNo||"", j.client, STATUS_META[j.status]?.label || j.status, j.assignedTo.map(id => staff.find(s=>s.id===id)?.name||id).join("; "), j.holdReason||"", j.holdSince||"", j.followUpNote||"", j.followUpSince||"", j.notes||""]);
+    const rows = sorted.map(j => [j.id, j.workOrderNo||"", j.title, j.orderNo||"", j.client, STATUS_META[j.status]?.label || j.status, j.assignedTo.map(id => staff.find(s=>s.id===id)?.name||id).join("; "), j.holdReason||"", j.holdSince||"", j.followUpNote||"", j.followUpSince||"", j.notes||""]);
     exportCSV(`jobs-export-${new Date().toISOString().split("T")[0]}.csv`, headers, rows);
   };
 
@@ -2240,7 +2255,33 @@ function SettingsSystemPage({ settings, setSettings }) {
     </div>
   );
 }
-
+function JobNumberSettingsCard({ settings, setSettings }) {
+  const [prefix, setPrefix] = useState(settings.jobNumberPrefix || "");
+  const [next, setNext] = useState(settings.jobNextNumber || "");
+  const [saved, setSaved] = useState(false);
+  const preview = next ? prefix + next : "";
+  const save = () => {
+    setSettings(p => ({ ...p, jobNumberPrefix: prefix.trim(), jobNextNumber: next.trim() }));
+    setSaved(true); setTimeout(() => setSaved(false), 2500);
+  };
+  return (
+    <div style={{ background:"var(--card-bg)", borderRadius:14, padding:24, boxShadow:"0 1px 4px #1C233310", maxWidth:560, marginBottom:20 }}>
+      <h2 style={{ fontSize:15, fontWeight:800, color:"var(--text-primary)", margin:"0 0 4px" }}>Job Numbering</h2>
+      <p style={{ fontSize:12, color:"var(--text-muted)", margin:"0 0 16px" }}>New jobs open with the next number already filled in, and it counts up each time you save one. You can still type over it on any job.</p>
+      <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0 16px" }}>
+        <Inp label="Prefix" value={prefix} onChange={e=>{ setPrefix(e.target.value); setSaved(false); }} placeholder="e.g. ABC" />
+        <Inp label="Next Number" value={next} onChange={e=>{ setNext(e.target.value.replace(/\D/g, "")); setSaved(false); }} placeholder="e.g. 01235" />
+      </div>
+      <div style={{ fontSize:12, color:"var(--text-secondary)", marginBottom:14 }}>
+        Next new job will be: <strong style={{ color:"var(--text-primary)" }}>{preview || "— (not set up, random number used)"}</strong>
+      </div>
+      <div style={{ display:"flex", alignItems:"center", gap:12 }}>
+        <Btn onClick={save}>Save Job Numbering</Btn>
+        {saved && <span style={{ fontSize:12, fontWeight:700, color:"#10B981" }}>✓ Saved</span>}
+      </div>
+    </div>
+  );
+}
 function SettingsJobsPage({ settings, setSettings, jobs, onImport }) {
   const [editingFields, setEditingFields] = useState(false);
   const [importingJobs, setImportingJobs] = useState(false);
@@ -2251,6 +2292,8 @@ function SettingsJobsPage({ settings, setSettings, jobs, onImport }) {
 
   return (
     <div>
+      <JobNumberSettingsCard settings={settings} setSettings={setSettings} />
+
       {/* Job summary fields */}
       <div style={{ background:"var(--card-bg)", borderRadius:14, padding:"18px 24px", boxShadow:"0 1px 4px #1C233310", maxWidth:560, marginBottom:20, display:"flex", alignItems:"center", justifyContent:"space-between" }}>
         <div>
@@ -2492,7 +2535,7 @@ function StaffVisibilityPicker({ staff, selectedIds, onToggle, onShowAll }) {
         </div>
     );
 }
-function SettingsView({ settings, setSettings, jobs, staff, setStaff, roles, setRoles, onImport }) {
+function SettingsView({ settings, setSettings, jobs, staff, setStaff, roles, setRoles, onImport, customers, setCustomers, suppliers, setSuppliers, company, setCompany }) {
   const [page, setPage] = useState("system");
 
   const SETTINGS_TABS = [
@@ -2539,7 +2582,7 @@ function SettingsView({ settings, setSettings, jobs, staff, setStaff, roles, set
           {page === "bills" && <SettingsEmptyPage label="Bills" />}
           {page === "offsite" && <SettingsEmptyPage label="Offsite" />}
           {page === "assets" && <SettingsAssetsPage settings={settings} setSettings={setSettings} />}
-          {page === "contacts" && <SettingsEmptyPage label="Contacts" />}
+                    {page === "contacts" && <ContactsView customers={customers} setCustomers={setCustomers} suppliers={suppliers} setSuppliers={setSuppliers} company={company} setCompany={setCompany} />}
           {page === "company" && <SettingsCompanyPage staff={staff} setStaff={setStaff} roles={roles} setRoles={setRoles} />}
                   {page === "mobilenav" && <SettingsMobileNavPage settings={settings} setSettings={setSettings} />}
               </div>
@@ -3721,12 +3764,97 @@ function JobCostsPage({ job, suppliers, purchaseOrders, setPurchaseOrders, setJo
         </div>
     );
 }
+function CustomerPicker({ customers, value, onChange, onAddNew }) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const [hi, setHi] = useState(0);
+  const q = query.trim().toLowerCase();
+  const allMatches = customers
+    .filter(c => !q || c.name.toLowerCase().includes(q))
+    .sort((a, b) => a.name.localeCompare(b.name));
+  const matches = allMatches.slice(0, 50);
 
-function JobDetailPage({ job, staff, roles, customers, suppliers, timeEntries, purchaseOrders, setPurchaseOrders, invoices, company, settings, onSave, onBack, onDelete, onOpenNotes, onOpenTime, onOpenCosts, onOpenInvoices }) {  const isNew = !job;
-  const [form, setForm] = useState(job || { id:uid(), title:"", client:"", workOrderNo:"", orderNo:"", status:"not-started", assignedTo:[], holdReason:"", holdSince:null, followUpNote:"", followUpSince:null, notes:"", customFields:{}, jobNotes:[], jobCosts:[] });
+  const choose = (name) => { onChange(name); setOpen(false); setQuery(""); };
+  const addNew = () => { setOpen(false); onAddNew(query.trim()); setQuery(""); };
+  const onKeyDown = (e) => {
+    if (e.key === "ArrowDown") { e.preventDefault(); setOpen(true); setHi(h => Math.min(h + 1, matches.length)); }
+    else if (e.key === "ArrowUp") { e.preventDefault(); setHi(h => Math.max(h - 1, 0)); }
+    else if (e.key === "Enter") { e.preventDefault(); if (!open) return; if (hi < matches.length) choose(matches[hi].name); else addNew(); }
+    else if (e.key === "Escape") { setOpen(false); setQuery(""); }
+  };
+
+  return (
+    <div style={{ position:"relative" }}>
+      <input
+        value={open ? query : value}
+        placeholder="Search customers…"
+        onFocus={() => { setOpen(true); setQuery(""); setHi(0); }}
+        onBlur={() => { setOpen(false); setQuery(""); }}
+        onChange={e => { setQuery(e.target.value); setHi(0); setOpen(true); }}
+        onKeyDown={onKeyDown}
+        style={{ width:"100%", border:"1.5px solid var(--border-strong)", borderRadius:8, padding:"9px 32px 9px 12px", fontSize:14, color:"var(--text-primary)", outline:"none", background:"var(--bg-subtle)", boxSizing:"border-box" }}
+      />
+      {value && !open && (
+        <button onMouseDown={e => { e.preventDefault(); onChange(""); }} title="Clear customer"
+          style={{ position:"absolute", right:8, top:"50%", transform:"translateY(-50%)", background:"none", border:"none", color:"var(--text-muted)", fontSize:16, cursor:"pointer", lineHeight:1, padding:4 }}>×</button>
+      )}
+      {open && (
+        <div style={{ position:"absolute", top:"100%", left:0, right:0, zIndex:600, marginTop:4, background:"var(--card-bg)", border:"1.5px solid var(--border-strong)", borderRadius:8, boxShadow:"0 8px 24px #00000030", maxHeight:260, overflowY:"auto" }}>
+          {matches.map((c, i) => (
+            <div key={c.id}
+              onMouseDown={e => { e.preventDefault(); choose(c.name); }}
+              onMouseEnter={() => setHi(i)}
+              style={{ padding:"9px 12px", fontSize:14, cursor:"pointer", color:"var(--text-primary)", background: hi === i ? "var(--bg-subtle2)" : "transparent", fontWeight: c.name === value ? 700 : 500 }}>
+              {c.name}
+            </div>
+          ))}
+          {allMatches.length > 50 && <div style={{ padding:"8px 12px", fontSize:11, color:"var(--text-muted)" }}>Showing first 50 of {allMatches.length} — keep typing to narrow down.</div>}
+          {q && matches.length === 0 && <div style={{ padding:"8px 12px", fontSize:12, color:"var(--text-muted)" }}>No customers match "{query.trim()}".</div>}
+          <div
+            onMouseDown={e => { e.preventDefault(); addNew(); }}
+            onMouseEnter={() => setHi(matches.length)}
+            style={{ padding:"10px 12px", fontSize:13, fontWeight:700, cursor:"pointer", color:ACCENT_TEXT, borderTop:"1px solid var(--border)", background: hi === matches.length ? "var(--bg-subtle2)" : "transparent" }}>
+            {q ? `+ Add "${query.trim()}" as new customer` : "+ Add new customer…"}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+function QuickAddCustomerModal({ customers, initialName, onSave, onClose }) {
+  const [draft, setDraft] = useState({ name: initialName || "", contactPerson:"", phone:"", email:"", address:"" });  const [error, setError] = useState("");
+  const save = () => {
+    const name = draft.name.trim();
+    if (!name) { setError("Customer name is required."); return; }
+    if (customers.some(c => c.name.toLowerCase() === name.toLowerCase())) { setError("A customer with this name already exists. Pick them from the list instead."); return; }
+    onSave({ id: cuid(), ...draft, name });
+  };
+  return (
+    <Modal title="Add New Customer" onClose={onClose}>
+      <Inp label="Name" value={draft.name} onChange={e=>{ setDraft(p=>({...p,name:e.target.value})); if(error) setError(""); }} placeholder="Company name" autoFocus/>
+      {error && <div style={{ fontSize:12, color:"#DC2626", marginTop:-10, marginBottom:14 }}>{error}</div>}
+      <Inp label="Contact Person" value={draft.contactPerson} onChange={e=>setDraft(p=>({...p,contactPerson:e.target.value}))} placeholder="e.g. Jane Smith"/>
+      <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0 16px" }}>
+        <Inp label="Phone" value={draft.phone} onChange={e=>setDraft(p=>({...p,phone:e.target.value}))} placeholder="e.g. 07 3000 0000"/>
+        <Inp label="Email" type="email" value={draft.email} onChange={e=>setDraft(p=>({...p,email:e.target.value}))} placeholder="e.g. contact@company.com"/>
+      </div>
+      <div style={{ marginBottom:20 }}>
+        <label style={{ display:"block",fontSize:12,fontWeight:700,color:"var(--text-secondary)",marginBottom:5,textTransform:"uppercase",letterSpacing:0.5 }}>Address</label>
+        <textarea value={draft.address} onChange={e=>setDraft(p=>({...p,address:e.target.value}))} rows={2} placeholder="Street, suburb, state, postcode" style={{ width:"100%",border:"1.5px solid var(--border-strong)",borderRadius:8,padding:"9px 12px",fontSize:14,background:"var(--bg-subtle)",boxSizing:"border-box",resize:"vertical",outline:"none",color:"var(--text-primary)" }}/>
+      </div>
+      <div style={{ display:"flex", gap:10, justifyContent:"flex-end" }}>
+        <Btn variant="secondary" onClick={onClose}>Cancel</Btn>
+        <Btn onClick={save}>Add Customer</Btn>
+      </div>
+    </Modal>
+  );
+}
+function JobDetailPage({ job, staff, roles, customers, setCustomers, suppliers, timeEntries, purchaseOrders, setPurchaseOrders, invoices, company, settings, onSave, onBack, onDelete, onOpenNotes, onOpenTime, onOpenCosts, onOpenInvoices }) {  const isNew = !job;
+  const [form, setForm] = useState(job || { id: nextJobNumberFromSettings(settings) || uid(), title:"", client:"", workOrderNo:"", orderNo:"", status:"not-started", assignedTo:[], holdReason:"", holdSince:null, followUpNote:"", followUpSince:null, notes:"", customFields:{}, jobNotes:[], jobCosts:[] });
   const [error, setError] = useState("");
   const [confirmingDelete, setConfirmingDelete] = useState(false);
-  const [printingJobSheet, setPrintingJobSheet] = useState(false);
+    const [printingJobSheet, setPrintingJobSheet] = useState(false);
+  const [addingCustomer, setAddingCustomer] = useState(false);
   const set = (k,v) => setForm(f=>({...f,[k]:v}));
   const setCustomField = (id,v) => setForm(f=>({...f, customFields:{ ...(f.customFields||{}), [id]:v } }));
   const toggleStaff = (id) => set("assignedTo", form.assignedTo.includes(id)?form.assignedTo.filter(x=>x!==id):[...form.assignedTo,id]);
@@ -3772,10 +3900,7 @@ function JobDetailPage({ job, staff, roles, customers, suppliers, timeEntries, p
               <Inp label="Job Number" value={form.id} onChange={e=>set("id",e.target.value)} placeholder="e.g. JOB-101"/>
               <div style={{ marginBottom:14 }}>
                 <label style={{ display:"block",fontSize:12,fontWeight:700,color:"var(--text-secondary)",marginBottom:5,textTransform:"uppercase",letterSpacing:0.5 }}>Customer</label>
-                <select value={form.client} onChange={e=>set("client",e.target.value)} style={{ width:"100%",border:"1.5px solid var(--border-strong)",borderRadius:8,padding:"9px 12px",fontSize:14,color:"var(--text-primary)",outline:"none",background:"var(--bg-subtle)",boxSizing:"border-box" }}>
-                  <option value="">— Select customer —</option>
-                  {customers.map(c=><option key={c.id} value={c.name}>{c.name}</option>)}
-                </select>
+                <CustomerPicker customers={customers} value={form.client} onChange={v=>set("client", v)} onAddNew={(name)=>setAddingCustomer(name || true)} />
               </div>
               <Inp label="Work Order No" value={form.workOrderNo||""} onChange={e=>set("workOrderNo",e.target.value)} placeholder="e.g. WO-2201"/>
               <Inp label="Order No (PO)" value={form.orderNo||""} onChange={e=>set("orderNo",e.target.value)} placeholder="e.g. PO-4401"/>
@@ -3877,6 +4002,10 @@ function JobDetailPage({ job, staff, roles, customers, suppliers, timeEntries, p
           </>
         )}
       </div>
+            {addingCustomer && (
+        <QuickAddCustomerModal customers={customers} initialName={typeof addingCustomer === "string" ? addingCustomer : ""} onClose={()=>setAddingCustomer(false)}
+          onSave={(c)=>{ setCustomers(p=>[...p, c]); set("client", c.name); setAddingCustomer(false); }} />
+      )}
       {printingJobSheet && !isNew && (
         <JobSheetPrintView job={job} staff={staff} roles={roles} customers={customers} suppliers={suppliers} timeEntries={timeEntries||[]} purchaseOrders={purchaseOrders||[]} company={company} settings={settings} onClose={()=>setPrintingJobSheet(false)} />
       )}
@@ -4577,9 +4706,16 @@ export default function App() {
   const pushJobSubpage = (view) => setJobPageStack(s => s.length ? [...s, { view, jobId: s[s.length-1].jobId }] : s);
   const popJobPage = () => setJobPageStack(s => s.slice(0, -1));
     const closeJobArea = () => setJobPageStack([]);
-    useEffect(() => {
+        useLayoutEffect(() => {
         if (jobPageStack.length === 0) {
-            if (scrollPosRef.current) requestAnimationFrame(() => window.scrollTo(0, scrollPosRef.current));
+            const y = scrollPosRef.current;
+            if (y) {
+                window.scrollTo(0, y);
+                // re-apply briefly in case the list re-renders after the save syncs
+                const t1 = setTimeout(() => window.scrollTo(0, y), 50);
+                const t2 = setTimeout(() => window.scrollTo(0, y), 250);
+                return () => { clearTimeout(t1); clearTimeout(t2); };
+            }
         } else {
             window.scrollTo(0, 0);
         }
@@ -4588,7 +4724,10 @@ export default function App() {
   const currentJob = currentJobPage?.jobId ? jobs.find(j => j.id === currentJobPage.jobId) : null;
 
   const saveJob = (job) => {
-    setJobs(prev=>{const idx=prev.findIndex(j=>j.id===job.id);if(idx>=0){const n=[...prev];n[idx]=job;return n;}return[{...job, createdAt: job.createdAt || todayISO()},...prev];});
+    if (!jobs.some(j => j.id === job.id)) {
+      const adv = advanceJobCounter(settings, job.id);
+      if (adv) setSettings(p => ({ ...p, jobNextNumber: adv }));
+    }    setJobs(prev=>{const idx=prev.findIndex(j=>j.id===job.id);if(idx>=0){const n=[...prev];n[idx]=job;return n;}return[{...job, createdAt: job.createdAt || todayISO()},...prev];});
     closeJobArea();
   };
   const deleteJob = (jobId) => {
@@ -4673,7 +4812,7 @@ export default function App() {
         {jobPageStack.length > 0 ? (
           <>
                         {currentJobPage.view === "detail" && (
-              <JobDetailPage job={currentJob} staff={staff} roles={roles} customers={customers} suppliers={suppliers} timeEntries={timeEntries} purchaseOrders={purchaseOrders} setPurchaseOrders={setPurchaseOrders} invoices={invoices} company={company} settings={settings}
+              <JobDetailPage job={currentJob} staff={staff} roles={roles} customers={customers} setCustomers={setCustomers} suppliers={suppliers} timeEntries={timeEntries} purchaseOrders={purchaseOrders} setPurchaseOrders={setPurchaseOrders} invoices={invoices} company={company} settings={settings}
                 onSave={saveJob} onDelete={deleteJob} onBack={closeJobArea}
                 onOpenTime={()=>pushJobSubpage("time")} onOpenNotes={()=>pushJobSubpage("notes")} onOpenCosts={()=>pushJobSubpage("costs")} onOpenInvoices={()=>pushJobSubpage("invoices")}/>
             )}
@@ -4704,8 +4843,7 @@ export default function App() {
                           {tab === "offsite" && <OffsiteView cols={offsiteTracker.cols} setCols={setOffsiteCols} data={offsiteTracker.data} setData={setOffsiteData} allocated={offsiteTracker.allocated} setAllocated={setOffsiteAllocated} />}
             {tab==="assets"    && <AssetsView assets={assets} setAssets={setAssets} groups={assetGroups} setGroups={setAssetGroups} staff={staff} settings={settings} setSettings={setSettings}/>}
             {tab==="contacts"  && <ContactsView customers={customers} setCustomers={setCustomers} suppliers={suppliers} setSuppliers={setSuppliers} company={company} setCompany={setCompany}/>}
-            {tab==="settings"  && <SettingsView settings={settings} setSettings={setSettings} jobs={jobs} staff={staff} setStaff={setStaff} roles={roles} setRoles={setRoles} onImport={importJobs}/>}
-          </>
+            {tab==="settings"  && <SettingsView settings={settings} setSettings={setSettings} jobs={jobs} staff={staff} setStaff={setStaff} roles={roles} setRoles={setRoles} onImport={importJobs} customers={customers} setCustomers={setCustomers} suppliers={suppliers} setSuppliers={setSuppliers} company={company} setCompany={setCompany}/>}          </>
         )}
       </div>
 
