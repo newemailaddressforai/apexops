@@ -318,6 +318,13 @@ const STATUS_META = {
   "ready-to-assemble": { label: "Ready to Assemble", color: "#06B6D4" },
   "completed":   { label: "Completed",    color: "#6366F1" },
 };
+const CUSTOM_STATUS_COLORS = ["#8B5CF6","#F97316","#14B8A6","#84CC16","#0EA5E9","#EF4444","#A855F7","#64748B"];
+// Custom statuses (Settings → Jobs) are merged into STATUS_META on every render, so every
+// page that already reads STATUS_META picks them up without needing its own changes.
+function syncCustomStatuses(customStatuses) {
+  Object.keys(STATUS_META).filter(k => k.startsWith("cs_")).forEach(k => delete STATUS_META[k]);
+  (customStatuses || []).forEach(s => { STATUS_META[s.id] = { label: s.label, color: s.color }; });
+}
 const DEFAULT_DASHBOARD_VISIBLE_STATUSES = {
     "not-started": true, "in-progress": true, "on-hold": true, "follow-up": true, "ready-to-assemble": true, "completed": false,
 };
@@ -880,7 +887,7 @@ function JobsView({ jobs, staff, customers, settings, setSettings, initialFilter
     exportCSV(`jobs-export-${new Date().toISOString().split("T")[0]}.csv`, headers, rows);
   };
 
-  const FILTER_OPTIONS = [["all","All Statuses"],["in-progress","In Progress"],["not-started","Not Started"],["on-hold","On Hold"],["follow-up","Follow Up"],["ready-to-assemble","Ready to Assemble"],["completed","Completed"]];
+  const FILTER_OPTIONS = [["all","All Statuses"],["in-progress","In Progress"],["not-started","Not Started"],["on-hold","On Hold"],["follow-up","Follow Up"],["ready-to-assemble","Ready to Assemble"],["completed","Completed"], ...Object.entries(STATUS_META).filter(([k])=>k.startsWith("cs_")).map(([k,m])=>[k,m.label])];
 
   const summaryFields = useMemo(() => buildSummaryFieldsWorkingList(settings || { jobSummaryFields: [], jobCustomFields: [] }).filter(f => f.enabled !== false), [settings]);
 
@@ -2255,6 +2262,70 @@ function SettingsSystemPage({ settings, setSettings }) {
     </div>
   );
 }
+function CustomStatusRow({ status, count, onChange, onRemove }) {
+  const [label, setLabel] = useState(status.label);
+  const commitLabel = () => {
+    const v = label.trim();
+    if (!v) { setLabel(status.label); return; }
+    if (v !== status.label) onChange({ ...status, label: v });
+  };
+  return (
+    <div style={{ display:"flex", alignItems:"center", gap:10, padding:"8px 12px", background:"var(--bg-subtle)", borderRadius:8 }}>
+      <span style={{ width:12, height:12, borderRadius:3, background:status.color, flexShrink:0 }} />
+      <input value={label} onChange={e=>setLabel(e.target.value)} onBlur={commitLabel} onKeyDown={e=>{ if (e.key==="Enter") e.target.blur(); }}
+        style={{ flex:1, minWidth:0, border:"1.5px solid var(--border)", borderRadius:6, padding:"5px 8px", fontSize:13, fontWeight:600, background:"var(--card-bg)", color:"var(--text-primary)", outline:"none" }} />
+      <div style={{ display:"flex", gap:4 }}>
+        {CUSTOM_STATUS_COLORS.map(c => (
+          <div key={c} onClick={()=>onChange({ ...status, color:c })} style={{ width:16, height:16, borderRadius:"50%", background:c, cursor:"pointer", border: status.color===c ? "2px solid var(--text-primary)" : "2px solid transparent", boxSizing:"border-box" }} />
+        ))}
+      </div>
+      <span style={{ fontSize:11, color:"var(--text-muted)", minWidth:44, textAlign:"right" }}>{count} job{count!==1?"s":""}</span>
+      <Btn variant="danger" style={{ padding:"4px 10px", fontSize:12 }} disabled={count>0} title={count>0 ? "Move these jobs to another status first" : "Remove this status"} onClick={onRemove}>×</Btn>
+    </div>
+  );
+}
+
+function CustomStatusesCard({ settings, setSettings, jobs }) {
+  const statuses = settings.customStatuses || [];
+  const [newLabel, setNewLabel] = useState("");
+  const [newColor, setNewColor] = useState(CUSTOM_STATUS_COLORS[0]);
+  const [error, setError] = useState("");
+  const builtInLabels = ["in progress","not started","on hold","follow up","ready to assemble","completed"];
+  const countFor = (id) => (jobs || []).filter(j => j.status === id).length;
+  const update = (s) => setSettings(p => ({ ...p, customStatuses: (p.customStatuses || []).map(x => x.id === s.id ? s : x) }));
+  const remove = (id) => setSettings(p => ({ ...p, customStatuses: (p.customStatuses || []).filter(x => x.id !== id) }));
+  const add = () => {
+    const label = newLabel.trim();
+    if (!label) { setError("Give the status a name."); return; }
+    if ([...builtInLabels, ...statuses.map(s => s.label.toLowerCase())].includes(label.toLowerCase())) { setError("A status with that name already exists."); return; }
+    setSettings(p => ({ ...p, customStatuses: [...(p.customStatuses || []), { id: "cs_" + Date.now(), label, color: newColor }] }));
+    setNewLabel(""); setError("");
+    setNewColor(CUSTOM_STATUS_COLORS[(statuses.length + 1) % CUSTOM_STATUS_COLORS.length]);
+  };
+  return (
+    <div style={{ background:"var(--card-bg)", borderRadius:14, padding:24, boxShadow:"0 1px 4px #1C233310", maxWidth:560, marginBottom:20 }}>
+      <h2 style={{ fontSize:15, fontWeight:800, color:"var(--text-primary)", margin:"0 0 4px" }}>Custom Statuses</h2>
+      <p style={{ fontSize:12, color:"var(--text-muted)", margin:"0 0 16px" }}>Add your own statuses (e.g. Ready to Quote, Quoted, Delivered, Invoiced). They sit alongside the built-in ones on the job form, Jobs filter and Dashboard. Click a name to rename it. A status can only be removed once no jobs are using it.</p>
+      {statuses.length > 0 && (
+        <div style={{ display:"flex", flexDirection:"column", gap:6, marginBottom:16 }}>
+          {statuses.map(s => <CustomStatusRow key={s.id} status={s} count={countFor(s.id)} onChange={update} onRemove={()=>remove(s.id)} />)}
+        </div>
+      )}
+      <label style={{ display:"block", fontSize:12, fontWeight:700, color:"var(--text-secondary)", marginBottom:8, textTransform:"uppercase", letterSpacing:0.5 }}>Add a status</label>
+      <div style={{ display:"flex", gap:8, alignItems:"center", flexWrap:"wrap" }}>
+        <input value={newLabel} onChange={e=>{ setNewLabel(e.target.value); if (error) setError(""); }} onKeyDown={e=>{ if (e.key==="Enter") add(); }} placeholder="e.g. Ready to Quote"
+          style={{ flex:1, minWidth:160, border:"1.5px solid var(--border-strong)", borderRadius:8, padding:"9px 12px", fontSize:14, background:"var(--bg-subtle)", color:"var(--text-primary)", outline:"none", boxSizing:"border-box" }} />
+        <div style={{ display:"flex", gap:4 }}>
+          {CUSTOM_STATUS_COLORS.map(c => (
+            <div key={c} onClick={()=>setNewColor(c)} style={{ width:18, height:18, borderRadius:"50%", background:c, cursor:"pointer", border: newColor===c ? "2px solid var(--text-primary)" : "2px solid transparent", boxSizing:"border-box" }} />
+          ))}
+        </div>
+        <Btn onClick={add}>Add</Btn>
+      </div>
+      {error && <div style={{ fontSize:12, color:"#DC2626", marginTop:10 }}>{error}</div>}
+    </div>
+  );
+}
 function JobNumberSettingsCard({ settings, setSettings }) {
   const [prefix, setPrefix] = useState(settings.jobNumberPrefix || "");
   const [next, setNext] = useState(settings.jobNextNumber || "");
@@ -2293,6 +2364,8 @@ function SettingsJobsPage({ settings, setSettings, jobs, onImport }) {
   return (
     <div>
       <JobNumberSettingsCard settings={settings} setSettings={setSettings} />
+
+      <CustomStatusesCard settings={settings} setSettings={setSettings} jobs={jobs} />
 
       {/* Job summary fields */}
       <div style={{ background:"var(--card-bg)", borderRadius:14, padding:"18px 24px", boxShadow:"0 1px 4px #1C233310", maxWidth:560, marginBottom:20, display:"flex", alignItems:"center", justifyContent:"space-between" }}>
@@ -3908,7 +3981,7 @@ function JobDetailPage({ job, staff, roles, customers, setCustomers, suppliers, 
                 <Inp label="Description" value={form.title} onChange={e=>{ set("title",e.target.value); if(error) setError(""); }} placeholder="Job description" style={error?{ borderColor:"#EF4444" }:{}}/>
                 {error && <div style={{ fontSize:12, color:"#DC2626", marginTop:-10, marginBottom:14 }}>{error}</div>}
               </div>
-              <Sel label="Status" value={form.status} onChange={e=>set("status",e.target.value)} options={[{value:"not-started",label:"Not Started"},{value:"in-progress",label:"In Progress"},{value:"on-hold",label:"On Hold"},{value:"follow-up",label:"Follow Up"},{value:"ready-to-assemble",label:"Ready to Assemble"},{value:"completed",label:"Completed"}]}/>
+              <Sel label="Status" value={form.status} onChange={e=>set("status",e.target.value)} options={[{value:"not-started",label:"Not Started"},{value:"in-progress",label:"In Progress"},{value:"on-hold",label:"On Hold"},{value:"follow-up",label:"Follow Up"},{value:"ready-to-assemble",label:"Ready to Assemble"},{value:"completed",label:"Completed"}, ...Object.entries(STATUS_META).filter(([k])=>k.startsWith("cs_")).map(([k,m])=>({value:k,label:m.label}))]}/>
             </div>
             {!isNew && (
               <div style={{ display:"flex", justifyContent:"flex-end", marginBottom:14 }}>
@@ -4758,8 +4831,8 @@ export default function App() {
         setJobsViewKey(k => k + 1);
         setTab("jobs");
     };
-    if (session === undefined) return <FullScreenStatus message="Loading ApexOps…" />;
-    if (!session) return <LoginScreen />;
+syncCustomStatuses(settings.customStatuses);
+    if (session === undefined) return <FullScreenStatus message="Loading ApexOps…" />;    if (!session) return <LoginScreen />;
     if (dataLoading) return <FullScreenStatus message="Loading your data…" />;
     if (dataError) return <FullScreenStatus message={`Couldn't load your data: ${dataError}`} isError />;
   return (

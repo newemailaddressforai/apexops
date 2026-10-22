@@ -71,7 +71,8 @@ const settingsMap = {
     invoice_tax_rate: s.invoiceTaxRate ?? 15,
     invoice_number_prefix: s.invoiceNumberPrefix || "INV",
     job_number_prefix: s.jobNumberPrefix || "",
-    job_next_number: s.jobNextNumber || "",  }),
+        job_next_number: s.jobNextNumber || "",
+    custom_statuses: s.customStatuses || [],  }),
   fromRow: (r) => ({
     theme: r.theme,
     weekStartDay: r.week_start_day,
@@ -94,7 +95,8 @@ const settingsMap = {
     invoiceTaxRate: r.invoice_tax_rate != null ? Number(r.invoice_tax_rate) : 15,
     invoiceNumberPrefix: r.invoice_number_prefix || "INV",
     jobNumberPrefix: r.job_number_prefix || "",
-    jobNextNumber: r.job_next_number || "",  }),
+        jobNextNumber: r.job_next_number || "",
+    customStatuses: r.custom_statuses || [],  }),
 };
 
 const timeEntryMap = {
