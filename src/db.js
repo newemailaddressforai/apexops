@@ -70,7 +70,8 @@ const settingsMap = {
     invoice_terms: s.invoiceTerms || "",
     invoice_tax_rate: s.invoiceTaxRate ?? 15,
     invoice_number_prefix: s.invoiceNumberPrefix || "INV",
-  }),
+    job_number_prefix: s.jobNumberPrefix || "",
+    job_next_number: s.jobNextNumber || "",  }),
   fromRow: (r) => ({
     theme: r.theme,
     weekStartDay: r.week_start_day,
@@ -92,7 +93,8 @@ const settingsMap = {
     invoiceTerms: r.invoice_terms || "",
     invoiceTaxRate: r.invoice_tax_rate != null ? Number(r.invoice_tax_rate) : 15,
     invoiceNumberPrefix: r.invoice_number_prefix || "INV",
-  }),
+    jobNumberPrefix: r.job_number_prefix || "",
+    jobNextNumber: r.job_next_number || "",  }),
 };
 
 const timeEntryMap = {
@@ -294,8 +296,7 @@ export async function fetchAllData() {
     supabase.from("invoices").select("*"),
     ]);
 
-  const firstError = [staffRes, rolesRes, customersRes, suppliersRes, jobsRes, jobNotesRes, jobCostsRes, timeEntriesRes, poRes, assetsRes, assetGroupsRes].find(r => r.error);
-  if (firstError?.error) throw firstError.error;
+  const firstError = [staffRes, rolesRes, customersRes, suppliersRes, companyRes, settingsRes, jobsRes, jobNotesRes, jobCostsRes, timeEntriesRes, poRes, assetsRes, assetGroupsRes, schedulerRes, offsiteRes, invoicesRes].find(r => r.error);  if (firstError?.error) throw firstError.error;
 
   // Attach notes/costs onto their parent job
   const notesByJob = {};
