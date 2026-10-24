@@ -105,7 +105,7 @@ function getRoleRates(roleId, roles) {
 function ruid() { return "role" + Date.now(); }
 
 const today = new Date();
-const d = (offset) => { const dt = new Date(today); dt.setDate(dt.getDate() + offset); return dt.toISOString().split("T")[0]; };
+const d = (offset) => { const dt = new Date(today); dt.setDate(dt.getDate() + offset); return localISO(dt); };
 
 const INITIAL_CUSTOMERS = [
   { id: "cu1", name: "City Council",       contactPerson: "Diane Foster", phone: "07 3221 4400", email: "diane.foster@citycouncil.gov.au", address: "1 Civic Plaza, Brisbane QLD 4000" },
@@ -346,7 +346,8 @@ function fileToDataURL(file) {
 }
 function supid() { return "su" + Date.now(); }
 function poid() { return "po" + Date.now(); }
-function todayISO() { return new Date().toISOString().split("T")[0]; } // live "today", not the module-load snapshot used by d()
+function localISO(dt) { return `${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,"0")}-${String(dt.getDate()).padStart(2,"0")}`; }
+function todayISO() { return localISO(new Date()); } // live "today", not the module-load snapshot used by d()
 function nextPONumber(purchaseOrders) {
   const nums = purchaseOrders.map(p => parseInt((p.poNumber||"").replace(/\D/g,""), 10)).filter(n => !isNaN(n));
   const next = (nums.length ? Math.max(...nums) : 1000) + 1;
@@ -533,7 +534,7 @@ function Dashboard({ jobs, staff, roles, settings, onNavigateStatus }) {
     const followUp = activeJobs.filter(j => j.status === "follow-up").length;
     const readyToAssemble = activeJobs.filter(j => j.status === "ready-to-assemble").length;
     const notStarted = activeJobs.filter(j => j.status === "not-started").length;
-    const today2 = new Date().toISOString().split("T")[0];
+    const today2 = todayISO();
     const holdJobs = activeJobs.filter(j => j.status === "on-hold")
         .slice()
         .sort((a, b) => (b.holdSince ? daysDiff(b.holdSince, today2) : 0) - (a.holdSince ? daysDiff(a.holdSince, today2) : 0))
@@ -584,7 +585,7 @@ function Dashboard({ jobs, staff, roles, settings, onNavigateStatus }) {
         <div style={{ background:"var(--card-bg)", borderRadius: 14, padding: 24, boxShadow: "0 1px 4px #1C233310" }}>
           <h3 style={{ margin: "0 0 16px", fontSize: 13, fontWeight: 800, color:"var(--text-primary)", textTransform: "uppercase", letterSpacing: 0.5 }}>On Hold — Durations</h3>
           {holdJobs.length === 0 ? <p style={{ color:"var(--text-muted)", fontSize: 13 }}>No jobs on hold.</p> : holdJobs.map((j, i) => {
-            const days = j.holdSince ? daysDiff(j.holdSince, new Date().toISOString().split("T")[0]) : 0;
+            const days = j.holdSince ? daysDiff(j.holdSince, todayISO()) : 0;
             return (
                 <div key={j.id} style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12, padding: "8px 12px", background: "#FFFBF0", borderRadius: 8, borderLeft: `3px solid ${HOLD_COLORS[i % HOLD_COLORS.length]}` }}>
                     <div style={{ flex: 1 }}>
@@ -602,7 +603,7 @@ function Dashboard({ jobs, staff, roles, settings, onNavigateStatus }) {
         <div style={{ background:"var(--card-bg)", borderRadius: 14, padding: 24, boxShadow: "0 1px 4px #1C233310" }}>
           <h3 style={{ margin: "0 0 16px", fontSize: 13, fontWeight: 800, color:"var(--text-primary)", textTransform: "uppercase", letterSpacing: 0.5 }}>Follow Up — Durations</h3>
           {followJobs.length === 0 ? <p style={{ color:"var(--text-muted)", fontSize: 13 }}>No jobs awaiting follow up.</p> : followJobs.map((j, i) => {
-            const days = j.followUpSince ? daysDiff(j.followUpSince, new Date().toISOString().split("T")[0]) : 0;
+            const days = j.followUpSince ? daysDiff(j.followUpSince, todayISO()) : 0;
             return (
                 <div key={j.id} style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12, padding: "8px 12px", background: "#FDF2F8", borderRadius: 8, borderLeft: "3px solid #EC4899" }}>
                     <div style={{ flex: 1 }}>
@@ -884,7 +885,7 @@ function JobsView({ jobs, staff, customers, settings, setSettings, initialFilter
   const handleExport = () => {
     const headers = ["Job ID","Work Order No","Description","Order No","Client","Status","Assigned To","Hold Reason","On Hold Since","Follow Up Note","Follow Up Since","Notes"];
     const rows = sorted.map(j => [j.id, j.workOrderNo||"", j.title, j.orderNo||"", j.client, STATUS_META[j.status]?.label || j.status, j.assignedTo.map(id => staff.find(s=>s.id===id)?.name||id).join("; "), j.holdReason||"", j.holdSince||"", j.followUpNote||"", j.followUpSince||"", j.notes||""]);
-    exportCSV(`jobs-export-${new Date().toISOString().split("T")[0]}.csv`, headers, rows);
+    exportCSV(`jobs-export-${todayISO()}.csv`, headers, rows);
   };
 
   const FILTER_OPTIONS = [["all","All Statuses"],["in-progress","In Progress"],["not-started","Not Started"],["on-hold","On Hold"],["follow-up","Follow Up"],["ready-to-assemble","Ready to Assemble"],["completed","Completed"], ...Object.entries(STATUS_META).filter(([k])=>k.startsWith("cs_")).map(([k,m])=>[k,m.label])];
@@ -983,8 +984,8 @@ function JobsView({ jobs, staff, customers, settings, setSettings, initialFilter
         }
       case "status": {
         const sm = STATUS_META[job.status] || { label: job.status, color: "var(--text-muted)" };
-        const holdDays = job.holdSince ? daysDiff(job.holdSince, new Date().toISOString().split("T")[0]) : 0;
-        const followDays = job.followUpSince ? daysDiff(job.followUpSince, new Date().toISOString().split("T")[0]) : 0;
+        const holdDays = job.holdSince ? daysDiff(job.holdSince, todayISO()) : 0;
+        const followDays = job.followUpSince ? daysDiff(job.followUpSince, todayISO()) : 0;
         return (
           <div>
             <Badge color={sm.color}>{sm.label}</Badge>
@@ -1068,7 +1069,7 @@ function JobsView({ jobs, staff, customers, settings, setSettings, initialFilter
 // ─── ON HOLD ──────────────────────────────────────────────────────────────────
 function OnHoldView({ jobs, staff, onEdit, onBack }) {
   const holdJobs = jobs.filter(j => j.status==="on-hold").sort((a,b) => a.holdSince>b.holdSince?1:-1);
-  const today2 = new Date().toISOString().split("T")[0];
+  const today2 = todayISO();
   return (
     <div>
       {onBack && <button onClick={onBack} style={{ background:"none", border:"none", color:"var(--text-secondary)", fontSize:13, fontWeight:600, cursor:"pointer", padding:0, marginBottom:14, display:"flex", alignItems:"center", gap:5 }}>← Back to Dashboard</button>}
@@ -1117,7 +1118,7 @@ function OnHoldView({ jobs, staff, onEdit, onBack }) {
 // ─── FOLLOW UP ────────────────────────────────────────────────────────────────
 function FollowUpView({ jobs, staff, onEdit, onBack }) {
   const followJobs = jobs.filter(j => j.status==="follow-up").sort((a,b) => a.followUpSince>b.followUpSince?1:-1);
-  const today2 = new Date().toISOString().split("T")[0];
+  const today2 = todayISO();
   return (
     <div>
       {onBack && <button onClick={onBack} style={{ background:"none", border:"none", color:"var(--text-secondary)", fontSize:13, fontWeight:600, cursor:"pointer", padding:0, marginBottom:14, display:"flex", alignItems:"center", gap:5 }}>← Back to Dashboard</button>}
@@ -1239,8 +1240,8 @@ function SchedulerView({ jobs, staff: allStaff, roles, settings, scheduleData, s
     const [openCell, setOpenCell] = useState(null); // { staffId, dayIdx }
   const [weekOffset, setWeekOffset] = useState(0);
 
-  const weekStart = useMemo(() => { const d2 = new Date(); d2.setDate(d2.getDate() - d2.getDay() + 1 + weekOffset * 7); return d2; }, [weekOffset]);
-  const weekKey = useMemo(() => weekStart.toISOString().split("T")[0], [weekStart]);
+  const weekStart = useMemo(() => { const d2 = new Date(); const dow = (d2.getDay() + 6) % 7; d2.setDate(d2.getDate() - dow + weekOffset * 7); return d2; }, [weekOffset]);
+    const weekKey = useMemo(() => localISO(weekStart), [weekStart]);
   const weekLabel = useMemo(() => { const end = new Date(weekStart); end.setDate(end.getDate() + 6); return `${weekStart.toLocaleDateString("en-AU",{day:"numeric",month:"short"})} – ${end.toLocaleDateString("en-AU",{day:"numeric",month:"short",year:"numeric"})}`; }, [weekStart]);
   const weekDays = useMemo(() => TIMESHEET_DAYS.map(({ name, weekend }, i) => { const dt = new Date(weekStart); dt.setDate(dt.getDate()+i); return { name, weekend, date: dt.toLocaleDateString("en-AU",{day:"numeric",month:"short"}), idx: i }; }), [weekStart]);
 
@@ -1460,7 +1461,7 @@ function TimesheetsView({ jobs, staff: allStaff, roles, timeEntries, setTimeEntr
 
   const weekStart = useMemo(() => getWeekStartDate(weekOffset, startDay), [weekOffset, startDay]);
   const weekLabel = useMemo(() => { const end = new Date(weekStart); end.setDate(end.getDate() + 6); return `${weekStart.toLocaleDateString("en-AU",{day:"numeric",month:"short"})} – ${end.toLocaleDateString("en-AU",{day:"numeric",month:"short",year:"numeric"})}`; }, [weekStart]);
-  const weekDays = useMemo(() => getOrderedWeekDays(startDay).map(({ name, weekend }, i) => { const dt = new Date(weekStart); dt.setDate(dt.getDate()+i); return { name, weekend, date: dt.toISOString().split("T")[0], display: dt.toLocaleDateString("en-AU",{day:"numeric",month:"short"}) }; }), [weekStart, startDay]);
+  const weekDays = useMemo(() => getOrderedWeekDays(startDay).map(({ name, weekend }, i) => { const dt = new Date(weekStart); dt.setDate(dt.getDate()+i); return { name, weekend, date: localISO(dt), display: dt.toLocaleDateString("en-AU",{day:"numeric",month:"short"}) }; }), [weekStart, startDay]);
 
   const jobColor = (jobId) => { const j = jobs.find(j=>j.id===jobId); return (STATUS_META[j?.status]||{color:ACCENT_TEXT}).color; };
   const entriesFor = (staffId, date) => timeEntries.filter(t => t.staffId===staffId && t.date===date);
@@ -1492,7 +1493,7 @@ function TimesheetsView({ jobs, staff: allStaff, roles, timeEntries, setTimeEntr
     });
     const headers = ["Staff", ...weekDays.map(d=>`${d.name} ${d.display}`), "Total Hours"];
     const rows = bySurname.map(s => [s.name, ...weekDays.map(({date})=>dayTotal(s.id,date)||0), weekTotal(s.id)]);
-    exportCSV(`timesheet-${weekStart.toISOString().split("T")[0]}.csv`, headers, rows);
+    exportCSV(`timesheet-${localISO(weekStart)}.csv`, headers, rows);
   };
 
   return (
@@ -2894,7 +2895,7 @@ function AssetsView({ assets, setAssets, groups, setGroups, staff, settings, set
   const dragRef = useRef(null);
   const [, forceTick] = useState(0);
 
-  const todayStr = new Date().toISOString().split("T")[0];
+  const todayStr = todayISO();
   const filtered = assets.filter(a => {
     const mg = groupFilter==="all" || a.groupId===groupFilter;
     const ms = statusFilter==="all" || a.status===statusFilter;
