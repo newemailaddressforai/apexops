@@ -348,6 +348,17 @@ function supid() { return "su" + Date.now(); }
 function poid() { return "po" + Date.now(); }
 function localISO(dt) { return `${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,"0")}-${String(dt.getDate()).padStart(2,"0")}`; }
 function todayISO() { return localISO(new Date()); } // live "today", not the module-load snapshot used by d()
+// Works out an invoice due date from the Settings rule. mode "days" = N days after issue; "monthday" = day N of the following month.
+function computeDueDate(issueISO, settings) {
+  const [y, m, d] = (issueISO || todayISO()).split("-").map(Number);
+  const mode = settings?.invoiceDueMode || "days";
+  const val = Number(settings?.invoiceDueValue ?? 14);
+  if (mode === "monthday") {
+    const dim = new Date(y, m + 1, 0).getDate();
+    return localISO(new Date(y, m, Math.min(Math.max(val || 1, 1), dim)));
+  }
+  return localISO(new Date(y, m - 1, d + val));
+}
 function nextPONumber(purchaseOrders) {
   const nums = purchaseOrders.map(p => parseInt((p.poNumber||"").replace(/\D/g,""), 10)).filter(n => !isNaN(n));
   const next = (nums.length ? Math.max(...nums) : 1000) + 1;
@@ -4285,7 +4296,8 @@ function InvoiceBuilderModal({ job, staff, roles, customers, timeEntries, purcha
   const customer = customers.find(c => c.name === job.client);
   const [invoiceNumber, setInvoiceNumber] = useState(editingInvoice?.invoiceNumber || nextInvoiceNumber(invoices, settings?.invoiceNumberPrefix));
   const [issueDate, setIssueDate] = useState(editingInvoice?.issueDate || todayISO());
-  const [dueDate, setDueDate] = useState(editingInvoice?.dueDate || todayISO());
+  const [dueDate, setDueDate] = useState(editingInvoice?.dueDate || computeDueDate(todayISO(), settings));
+  const [dueTouched, setDueTouched] = useState(false);
   const [lines, setLines] = useState(editingInvoice?.lineItems || buildInvoiceLinesForJob(job, staff, roles, timeEntries, purchaseOrders));
   const [notes, setNotes] = useState(editingInvoice?.notes ?? (settings?.invoiceFooterNote || ""));
   const [error, setError] = useState("");
@@ -4315,8 +4327,8 @@ function InvoiceBuilderModal({ job, staff, roles, customers, timeEntries, purcha
     <Modal title={editingInvoice ? `Edit ${editingInvoice.invoiceNumber}` : `New Invoice — ${job.id}`} onClose={onClose} wide>
       <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:"0 16px" }}>
         <Inp label="Invoice Number" value={invoiceNumber} onChange={e=>{ setInvoiceNumber(e.target.value); if(error) setError(""); }} />
-        <Inp label="Issue Date" type="date" value={issueDate} onChange={e=>setIssueDate(e.target.value)} />
-        <Inp label="Due Date" type="date" value={dueDate} onChange={e=>setDueDate(e.target.value)} />
+        <Inp label="Issue Date" type="date" value={issueDate} onChange={e=>{ setIssueDate(e.target.value); if (!editingInvoice && !dueTouched && e.target.value) setDueDate(computeDueDate(e.target.value, settings)); }} />
+        <Inp label="Due Date" type="date" value={dueDate} onChange={e=>{ setDueDate(e.target.value); setDueTouched(true); }} />
       </div>
 
       <div style={{ background:"var(--bg-subtle)", borderRadius:8, padding:"10px 14px", marginBottom:16 }}>
@@ -4577,7 +4589,7 @@ function InvoicesView({ jobs, customers, invoices, setInvoices, staff, roles, ti
 }
 
 function SettingsInvoicesPage({ settings, setSettings }) {
-  const [draft, setDraft] = useState({ invoiceFooterNote: settings.invoiceFooterNote, invoiceTerms: settings.invoiceTerms, invoiceTaxRate: settings.invoiceTaxRate ?? 15, invoiceNumberPrefix: settings.invoiceNumberPrefix || "INV" });
+  const [draft, setDraft] = useState({ invoiceFooterNote: settings.invoiceFooterNote, invoiceTerms: settings.invoiceTerms, invoiceTaxRate: settings.invoiceTaxRate ?? 15, invoiceNumberPrefix: settings.invoiceNumberPrefix || "INV", invoiceDueMode: settings.invoiceDueMode || "days", invoiceDueValue: settings.invoiceDueValue ?? 14 });
   const [saved, setSaved] = useState(false);
   const set = (k,v) => { setDraft(p=>({...p,[k]:v})); setSaved(false); };
   const handleSave = () => { setSettings(p=>({ ...p, ...draft })); setSaved(true); setTimeout(()=>setSaved(false), 2500); };
@@ -4590,6 +4602,10 @@ function SettingsInvoicesPage({ settings, setSettings }) {
         <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0 16px" }}>
           <Inp label="Invoice Number Prefix" value={draft.invoiceNumberPrefix} onChange={e=>set("invoiceNumberPrefix",e.target.value)} placeholder="e.g. INV" />
           <Inp label="Tax Rate (%)" type="number" step="0.1" min="0" value={draft.invoiceTaxRate} onChange={e=>set("invoiceTaxRate",parseFloat(e.target.value)||0)} placeholder="e.g. 15" />
+        </div>
+        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0 16px" }}>
+          <Sel label="Invoice Due Date Rule" value={draft.invoiceDueMode} onChange={e=>set("invoiceDueMode",e.target.value)} options={[{ value:"days", label:"Days after issue date" }, { value:"monthday", label:"Day of the following month" }]} />
+          <Inp label={draft.invoiceDueMode === "monthday" ? "Day of month (1–31)" : "Number of days"} type="number" min="1" max={draft.invoiceDueMode === "monthday" ? 31 : 365} value={draft.invoiceDueValue} onChange={e=>set("invoiceDueValue",parseInt(e.target.value,10)||0)} placeholder={draft.invoiceDueMode === "monthday" ? "e.g. 20" : "e.g. 14"} />
         </div>
         <div style={{ marginBottom:14 }}>
           <label style={{ display:"block", fontSize:12, fontWeight:700, color:"var(--text-secondary)", marginBottom:5, textTransform:"uppercase", letterSpacing:0.5 }}>Default Notes / Payment Terms</label>

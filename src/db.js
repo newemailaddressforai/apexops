@@ -72,7 +72,11 @@ const settingsMap = {
     invoice_number_prefix: s.invoiceNumberPrefix || "INV",
     job_number_prefix: s.jobNumberPrefix || "",
         job_next_number: s.jobNextNumber || "",
-    custom_statuses: s.customStatuses || [],  }),
+    custom_statuses: s.customStatuses || [],
+    hide_labour_costs: !!s.hideLabourCosts,
+    time_step: s.timeStep || 15,
+    invoice_due_mode: s.invoiceDueMode || "days",
+    invoice_due_value: s.invoiceDueValue ?? 14,  }),
   fromRow: (r) => ({
     theme: r.theme,
     weekStartDay: r.week_start_day,
@@ -96,7 +100,11 @@ const settingsMap = {
     invoiceNumberPrefix: r.invoice_number_prefix || "INV",
     jobNumberPrefix: r.job_number_prefix || "",
         jobNextNumber: r.job_next_number || "",
-    customStatuses: r.custom_statuses || [],  }),
+    customStatuses: r.custom_statuses || [],
+    hideLabourCosts: !!r.hide_labour_costs,
+    timeStep: r.time_step || 15,
+    invoiceDueMode: r.invoice_due_mode || "days",
+    invoiceDueValue: r.invoice_due_value != null ? Number(r.invoice_due_value) : 14,  }),
 };
 
 const timeEntryMap = {
