@@ -3286,9 +3286,10 @@ function POBillModal({ po, bills, setBills, setPurchaseOrders, suppliers, jobs, 
   );
 }
 
-function BillsView({ bills, setBills, setPurchaseOrders, suppliers, jobs, purchaseOrders }) {
+function BillsView({ bills, setBills, setPurchaseOrders, setJobs, suppliers, jobs, purchaseOrders, settings }) {
   const [filter, setFilter] = useState("unpaid"); // unpaid | overdue | paid | all
   const [billFromPO, setBillFromPO] = useState(null);
+  const [inclGST, setInclGST] = useState(false);
   const [search, setSearch] = useState("");
   const [editing, setEditing] = useState(null); // bill object, "new", or null
   const [deleting, setDeleting] = useState(null);
@@ -3296,7 +3297,16 @@ function BillsView({ bills, setBills, setPurchaseOrders, suppliers, jobs, purcha
   const supplierLabel = (b) => suppliers.find(s => s.id === b.supplierId)?.name || b.supplierName || "—";
   const unpaid = bills.filter(b => b.status !== "paid");
   const overdue = bills.filter(isBillOverdue);
-  const sumOf = (list) => list.reduce((s, b) => s + (b.amount || 0), 0);
+  const rate = settings?.invoiceTaxRate ?? 15;
+  const gstFactor = inclGST ? 1 + rate / 100 : 1;
+  const amt = (b) => (b.amount || 0) * gstFactor;
+  const sumOf = (list) => list.reduce((s, b) => s + amt(b), 0);
+  const today = todayISO();
+  const [ty, tm, td] = today.split("-").map(Number);
+  const weekEnd = localISO(new Date(ty, tm - 1, td + 7));
+  const monthEnd = localISO(new Date(ty, tm, 0));
+  const dueWeek = unpaid.filter(b => b.dueDate && b.dueDate >= today && b.dueDate <= weekEnd);
+  const dueMonth = unpaid.filter(b => b.dueDate && b.dueDate > weekEnd && b.dueDate <= monthEnd);
   const unbilledPOs = purchaseOrders.filter(p => p.status === "billed" && !bills.some(b => b.poId === p.id));
 
   const rows = bills
@@ -3309,6 +3319,7 @@ function BillsView({ bills, setBills, setPurchaseOrders, suppliers, jobs, purcha
     .sort((a, b) => filter === "paid" || filter === "all" ? (b.dueDate || "") < (a.dueDate || "") ? -1 : 1 : (a.dueDate || "9999") < (b.dueDate || "9999") ? -1 : 1);
 
   const saveBill = (b) => {
+    syncCostFromBill(setJobs, b);
     syncPOFromBill(setPurchaseOrders, b);
     setBills(prev => prev.some(x => x.id === b.id) ? prev.map(x => x.id === b.id ? b : x) : [...prev, b]);
     setEditing(null);
@@ -3329,10 +3340,23 @@ function BillsView({ bills, setBills, setPurchaseOrders, suppliers, jobs, purcha
     <div>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20, gap: 12, flexWrap: "wrap" }}>
         <div>
-          <h1 style={{ fontSize: 24, fontWeight: 900, color: "var(--text-primary)", margin: "0 0 4px" }}>Bills</h1>
-          <p style={{ color: "var(--text-secondary)", fontSize: 14, margin: 0 }}>Supplier invoices you owe — {fmtMoney(sumOf(unpaid))} unpaid{overdue.length ? `, ${fmtMoney(sumOf(overdue))} overdue` : ""}</p>
+          <h1 style={{ fontSize: 24, fontWeight: 900, color: "var(--text-primary)", margin: "0 0 4px" }}>Costs</h1>
+          <p style={{ color: "var(--text-secondary)", fontSize: 14, margin: 0 }}>Supplier bills you owe — {fmtMoney(sumOf(unpaid))} {inclGST ? "incl. GST" : "ex. GST"} unpaid{overdue.length ? `, ${fmtMoney(sumOf(overdue))} overdue` : ""}</p>
         </div>
-        <Btn onClick={() => setEditing("new")}>+ New Bill</Btn>
+        <div style={{ display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
+          <label style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 13, fontWeight: 600, color: "var(--text-secondary)", cursor: "pointer" }}>
+            Show incl. GST ({rate}%)
+            <ToggleSwitch on={inclGST} onClick={() => setInclGST(v => !v)} />
+          </label>
+          <Btn onClick={() => setEditing("new")}>+ New Bill</Btn>
+        </div>
+      </div>
+
+      <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 20 }}>
+        <StatCard label="Overdue" value={fmtMoney(sumOf(overdue))} sub={`${overdue.length} bill${overdue.length !== 1 ? "s" : ""}`} accent="#DC2626" onClick={() => setFilter("overdue")} />
+        <StatCard label="Due in the next 7 days" value={fmtMoney(sumOf(dueWeek))} sub={`${dueWeek.length} bill${dueWeek.length !== 1 ? "s" : ""}`} accent="#F59E0B" />
+        <StatCard label="Later this month" value={fmtMoney(sumOf(dueMonth))} sub={`${dueMonth.length} bill${dueMonth.length !== 1 ? "s" : ""}`} accent="#3B82F6" />
+        <StatCard label="Total unpaid" value={fmtMoney(sumOf(unpaid))} sub={`${unpaid.length} bill${unpaid.length !== 1 ? "s" : ""} · ${inclGST ? "incl." : "ex."} GST`} accent="#64748B" onClick={() => setFilter("unpaid")} />
       </div>
 
       {unbilledPOs.length > 0 && (
@@ -3342,7 +3366,7 @@ function BillsView({ bills, setBills, setPurchaseOrders, suppliers, jobs, purcha
             <div key={po.id} style={{ display: "flex", alignItems: "center", gap: 12, padding: "4px 0", fontSize: 13, flexWrap: "wrap" }}>
               <span style={{ fontWeight: 700, color: ACCENT_TEXT, minWidth: 80 }}>{po.poNumber}</span>
               <span style={{ flex: 1, minWidth: 120, color: "var(--text-secondary)" }}>{suppliers.find(s => s.id === po.supplierId)?.name || "Unknown supplier"} · {po.jobId}</span>
-              <span style={{ fontWeight: 700, color: "var(--text-primary)" }}>{fmtMoney(po.billedCost)}</span>
+              <span style={{ fontWeight: 700, color: "var(--text-primary)" }}>{fmtMoney((po.billedCost || 0) * gstFactor)}</span>
               <Btn variant="secondary" style={{ padding: "4px 12px", fontSize: 12 }} onClick={() => setBillFromPO(po)}>+ Add bill</Btn>
             </div>
           ))}
@@ -3379,12 +3403,13 @@ function BillsView({ bills, setBills, setPurchaseOrders, suppliers, jobs, purcha
               </div>
               <div style={{ fontSize: 13, color: "var(--text-secondary)", minWidth: 0 }}>{b.invoiceNumber || "—"}{(b.attachments || []).length > 0 && <span style={{ marginLeft: 6, fontSize: 11 }}>📎{b.attachments.length}</span>}</div>
               <div style={{ fontSize: 13, color: "var(--text-secondary)" }}>{b.jobId || "—"}</div>
-              <div style={{ fontSize: 14, fontWeight: 800, color: "var(--text-primary)" }}>{fmtMoney(b.amount)}</div>
+              <div style={{ fontSize: 14, fontWeight: 800, color: "var(--text-primary)" }}>{fmtMoney(amt(b))}</div>
               <button onClick={() => togglePaid(b)} title={paid ? "Click to mark as unpaid" : "Click to mark as paid"}
                 style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "4px 10px", borderRadius: 99, border: "1.5px solid " + color, background: color + "18", color, fontWeight: 800, fontSize: 11, textTransform: "uppercase", letterSpacing: 0.3, cursor: "pointer" }}>
                 <span style={{ width: 7, height: 7, borderRadius: "50%", background: color }} />{paid ? "Paid" : late ? "Overdue" : "Unpaid"}
               </button>
               <div style={{ display: "flex", gap: 8 }}>
+                {!paid && <Btn onClick={() => togglePaid(b)}>Mark Paid</Btn>}
                 <Btn variant="secondary" onClick={() => setEditing(b)}>Edit</Btn>
                 <Btn variant="danger" onClick={() => setDeleting(b)}>Delete</Btn>
               </div>
@@ -3410,6 +3435,26 @@ function BillsView({ bills, setBills, setPurchaseOrders, suppliers, jobs, purcha
     </div>
   );
 }
+// Keeps an additional cost's amount (and so the job card) equal to the amount on its linked bill.
+function syncCostFromBill(setJobs, bill) {
+  if (!bill.costId) return;
+  setJobs(prev => prev.map(j => (j.jobCosts || []).some(c => c.id === bill.costId && c.amount !== bill.amount)
+    ? { ...j, jobCosts: j.jobCosts.map(c => c.id === bill.costId ? { ...c, amount: bill.amount } : c) }
+    : j));
+}
+
+// Opens the bill (supplier invoice) behind an additional cost: edits the linked bill, or starts a new one pre-filled from the cost.
+function CostBillModal({ cost, job, bills, setBills, setJobs, suppliers, jobs, purchaseOrders, onClose }) {
+  const existing = bills.find(b => b.costId === cost.id);
+  return (
+    <BillModal bill={existing || null}
+      prefill={existing ? null : { jobId: job.id, costId: cost.id, amount: cost.amount, notes: cost.label }}
+      suppliers={suppliers} jobs={jobs} purchaseOrders={purchaseOrders}
+      onSave={(b) => { setBills(prev => prev.some(x => x.id === b.id) ? prev.map(x => x.id === b.id ? b : x) : [...prev, b]); syncCostFromBill(setJobs, b); onClose(); }}
+      onClose={onClose} />
+  );
+}
+
 function ComingSoonView({ title, description, icon }) {
   return (
     <div>
@@ -3428,6 +3473,7 @@ function PurchaseOrdersView({ bills, setBills, jobs, staff, customers, suppliers
   const [search, setSearch] = useState("");
   const [pickingJob, setPickingJob] = useState(false);
   const [creatingForJob, setCreatingForJob] = useState(null);
+  const [billFormPO, setBillFormPO] = useState(null);
   const [editingPO, setEditingPO] = useState(null);
     const [printingPO, setPrintingPO] = useState(null);
     const [billingPO, setBillingPO] = useState(null);
@@ -3443,8 +3489,7 @@ function PurchaseOrdersView({ bills, setBills, jobs, staff, customers, suppliers
     .sort((a,b) => a.po.dateCreated < b.po.dateCreated ? 1 : -1);
 
   const addPO = (po) => { setPurchaseOrders(prev=>[...prev, { ...po, poNumber: nextPONumber(prev) }]); setCreatingForJob(null); };
-  const updatePO = (updated) => { setPurchaseOrders(prev=>prev.map(p=>p.id===updated.id?updated:p)); setBillingPO(null); };
-  const deletePO = (poId) => { setPurchaseOrders(prev => prev.filter(p=>p.id!==poId)); setDeletingPO(null); };
+const updatePO = (updated) => { setPurchaseOrders(prev=>prev.map(p=>p.id===updated.id?updated:p)); setBillingPO(null); if (updated.status === "billed") { setBills(prev => prev.map(b => b.poId === updated.id && b.amount !== updated.billedCost ? { ...b, amount: updated.billedCost } : b)); if (!bills.some(b => b.poId === updated.id)) setBillFormPO(updated); } };  const deletePO = (poId) => { setPurchaseOrders(prev => prev.filter(p=>p.id!==poId)); setDeletingPO(null); };
   return (
     <div>
       <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:20 }}>
@@ -3481,7 +3526,10 @@ function PurchaseOrdersView({ bills, setBills, jobs, staff, customers, suppliers
                 </button>
               ) : <span style={{ fontSize:12, color:"var(--text-muted)" }}>{po.jobId} (deleted)</span>}
             </div>
-                <POStatusBadge po={po} onClick={() => setBillingPO(po)} />
+                <div style={{ display:"flex", alignItems:"center", gap:8, flexWrap:"wrap" }}>
+                  <POStatusBadge po={po} onClick={() => setBillingPO(po)} />
+                  {po.status === "billed" && <button onClick={() => setBillFormPO(po)} style={{ background:"none", border:"1.5px solid var(--border-strong)", borderRadius:99, padding:"3px 10px", fontSize:11, fontWeight:700, color: bills.some(b => b.poId === po.id) ? "#10B981" : ACCENT_TEXT, cursor:"pointer" }}>{bills.some(b => b.poId === po.id) ? "Bill ✓" : "+ Bill"}</button>}
+                </div>
                 <Btn variant="secondary" onClick={() => setPrintingPO(po)}>View / Print</Btn><Btn variant="secondary" onClick={() => setEditingPO(po)}>Edit</Btn>
                 <Btn variant="danger" onClick={() => setDeletingPO(po)}>Delete</Btn>
             </div>
@@ -3495,6 +3543,7 @@ function PurchaseOrdersView({ bills, setBills, jobs, staff, customers, suppliers
       {pickingJob && (
         <JobPickerModal jobs={jobs} onClose={()=>setPickingJob(false)} onSelect={(j)=>{ setPickingJob(false); setCreatingForJob(j); }} />
       )}
+      {billFormPO && <POBillModal po={billFormPO} bills={bills} setBills={setBills} setPurchaseOrders={setPurchaseOrders} suppliers={suppliers} jobs={jobs} purchaseOrders={purchaseOrders} onClose={() => setBillFormPO(null)} />}
       {editingPO && <PurchaseOrderModal job={{ id: editingPO.jobId, title: "" }} suppliers={suppliers} purchaseOrders={purchaseOrders} editingPO={editingPO} onSave={(u) => { setPurchaseOrders(prev => prev.map(p => p.id === u.id ? u : p)); setEditingPO(null); }} onClose={() => setEditingPO(null)} />}
       {creatingForJob && (
         <PurchaseOrderModal job={creatingForJob} suppliers={suppliers} purchaseOrders={purchaseOrders} onSave={addPO} onClose={()=>setCreatingForJob(null)} />
@@ -4060,6 +4109,7 @@ function JobCostsPage({ jobs, bills, setBills, job, suppliers, purchaseOrders, s
     const [deletingPO, setDeletingPO] = useState(null);const [editingPO, setEditingPO] = useState(null);
   const [billFormPO, setBillFormPO] = useState(null);
   const [addingCost, setAddingCost] = useState(false);
+  const [billFormCost, setBillFormCost] = useState(null);
   const jobPOs = (purchaseOrders||[]).filter(p=>p.jobId===job.id).sort((a,b)=> a.dateCreated<b.dateCreated?1:-1);
   const jobCosts = (job.jobCosts||[]).slice().sort((a,b)=> a.createdAt<b.createdAt?1:-1);
   const addPO = (po) => { setPurchaseOrders(prev=>[...prev, { ...po, poNumber: nextPONumber(prev) }]); setShowPOModal(false); };
@@ -4141,6 +4191,7 @@ function JobCostsPage({ jobs, bills, setBills, job, suppliers, purchaseOrders, s
                   <div style={{ fontSize:11, color:"var(--text-muted)", marginTop:2 }}>{formatDate(cost.createdAt)}</div>
                 </div>
                 <div style={{ fontSize:14, fontWeight:800, color:"#065F46" }}>${cost.amount.toFixed(2)}</div>
+                <button onClick={() => setBillFormCost(cost)} style={{ background:"none", border:"1.5px solid var(--border-strong)", borderRadius:99, padding:"3px 10px", fontSize:11, fontWeight:700, color: bills.some(b => b.costId === cost.id) ? "#10B981" : ACCENT_TEXT, cursor:"pointer" }}>{bills.some(b => b.costId === cost.id) ? "Bill ✓" : "+ Bill"}</button>
                 <button onClick={()=>removeCost(cost.id)} style={{ background:"none", border:"none", color:"var(--text-muted)", fontSize:16, cursor:"pointer", lineHeight:1, padding:0 }}>×</button>
               </div>
             ))}
@@ -4154,6 +4205,7 @@ function JobCostsPage({ jobs, bills, setBills, job, suppliers, purchaseOrders, s
       {billingPO && (
         <BillPOModal po={billingPO} onSave={updatePO} onClose={()=>setBillingPO(null)} />
       )}
+      {billFormCost && <CostBillModal cost={billFormCost} job={job} bills={bills} setBills={setBills} setJobs={setJobs} suppliers={suppliers} jobs={jobs} purchaseOrders={purchaseOrders} onClose={() => setBillFormCost(null)} />}
       {showPOModal && (
         <PurchaseOrderModal job={job} suppliers={suppliers} purchaseOrders={purchaseOrders} onSave={addPO} onClose={()=>setShowPOModal(false)} />
       )}
@@ -4434,7 +4486,7 @@ const NAV_ITEMS = [
   { id:"purchaseorders", label:"Purchase Orders", icon:"▤" },
   { id:"quotes",    label:"Quotes",     icon:"▧" },
   { id:"invoices",  label:"Invoices",   icon:"▥" },
-  { id:"bills",     label:"Bills",      icon:"▨" },
+  { id:"bills",     label:"Costs",      icon:"▨" },
   { id:"offsite",   label:"Offsite",    icon:"⊞" },
   { id:"assets",    label:"Assets",     icon:"▩" },
   { id:"contacts",  label:"Contacts",   icon:"◎" },
@@ -5258,7 +5310,7 @@ syncCustomStatuses(settings.customStatuses);
             {tab==="timesheets"&& <TimesheetsView jobs={jobs} staff={staff} roles={roles} timeEntries={timeEntries} setTimeEntries={setTimeEntries} settings={settings}/>}
             {tab==="purchaseorders" && <PurchaseOrdersView bills={bills} setBills={setBills} jobs={jobs} staff={staff} customers={customers} suppliers={suppliers} purchaseOrders={purchaseOrders} setPurchaseOrders={setPurchaseOrders} company={company} settings={settings} onOpenJob={j=>openJob(j.id)}/>}
             {tab==="quotes"    && <ComingSoonView title="Quotes" description="Send customers a priced quote before the work begins." icon="▧"/>}
-            {tab==="invoices"  && <InvoicesView jobs={jobs} customers={customers} invoices={invoices} setInvoices={setInvoices} staff={staff} roles={roles} timeEntries={timeEntries} purchaseOrders={purchaseOrders} company={company} settings={settings} onOpenJob={j=>openJob(j.id)}/>}            {tab==="bills"     && <BillsView bills={bills} setBills={setBills} setPurchaseOrders={setPurchaseOrders} suppliers={suppliers} jobs={jobs} purchaseOrders={purchaseOrders}/>}
+            {tab==="invoices"  && <InvoicesView jobs={jobs} customers={customers} invoices={invoices} setInvoices={setInvoices} staff={staff} roles={roles} timeEntries={timeEntries} purchaseOrders={purchaseOrders} company={company} settings={settings} onOpenJob={j=>openJob(j.id)}/>}            {tab==="bills"     && <BillsView bills={bills} setBills={setBills} setPurchaseOrders={setPurchaseOrders} setJobs={setJobs} suppliers={suppliers} jobs={jobs} purchaseOrders={purchaseOrders} settings={settings}/>}
                           {tab === "offsite" && <OffsiteView cols={offsiteTracker.cols} setCols={setOffsiteCols} data={offsiteTracker.data} setData={setOffsiteData} allocated={offsiteTracker.allocated} setAllocated={setOffsiteAllocated} />}
             {tab==="assets"    && <AssetsView assets={assets} setAssets={setAssets} groups={assetGroups} setGroups={setAssetGroups} staff={staff} settings={settings} setSettings={setSettings}/>}
             {tab==="contacts"  && <ContactsView customers={customers} setCustomers={setCustomers} suppliers={suppliers} setSuppliers={setSuppliers} company={company} setCompany={setCompany}/>}
