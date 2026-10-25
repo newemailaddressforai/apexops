@@ -1,5 +1,5 @@
 import { useState, useMemo, useRef, useEffect, useLayoutEffect, Fragment } from "react";import { supabase } from "./supabaseClient";
-import { useSyncedTable, useSyncedSingleton, useSyncedJobs, fetchAllData, ensureSingletonsExist, staffMap, rolesMap, contactMap, companyMap, settingsMap, timeEntryMap, poMap, assetMap, assetGroupMap, schedulerDataMap, offsiteTrackerMap, invoiceMap } from "./db";
+import { useSyncedTable, useSyncedSingleton, useSyncedJobs, fetchAllData, ensureSingletonsExist, staffMap, rolesMap, contactMap, companyMap, settingsMap, timeEntryMap, poMap, assetMap, assetGroupMap, schedulerDataMap, offsiteTrackerMap, invoiceMap, billMap } from "./db";
 import logoSidebar from "./assets/logo-sidebar.png";
 import { LoginScreen, FullScreenStatus } from "./AuthScreens";
 import JSZip from "jszip";
@@ -3139,6 +3139,277 @@ function AssetsView({ assets, setAssets, groups, setGroups, staff, settings, set
   );
 }
 
+// ─── BILLS (supplier invoices you owe) ────────────────────────────────────────
+const BILL_BUCKET = "bill-files";
+function bid() { return "bill" + Date.now() + Math.floor(Math.random() * 1000); }
+function fmtMoney(n) { return "$" + (Number(n) || 0).toLocaleString("en-NZ", { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+function fmtSize(b) { if (!b) return ""; return b < 1048576 ? Math.max(1, Math.round(b / 1024)) + " KB" : (b / 1048576).toFixed(1) + " MB"; }
+function isBillOverdue(b) { return b.status !== "paid" && !!b.dueDate && b.dueDate < todayISO(); }
+
+async function uploadBillFiles(billId, files) {
+  const out = [];
+  for (const f of files) {
+    const safe = f.name.replace(/[^\w.\-]+/g, "_");
+    const path = `${billId}/${Date.now()}-${safe}`;
+    const { error } = await supabase.storage.from(BILL_BUCKET).upload(path, f, { contentType: f.type || undefined });
+    if (error) throw error;
+    out.push({ path, name: f.name, size: f.size, type: f.type });
+  }
+  return out;
+}
+async function openBillFile(att) {
+  const w = window.open("about:blank", "_blank");
+  const { data, error } = await supabase.storage.from(BILL_BUCKET).createSignedUrl(att.path, 300);
+  if (error || !data?.signedUrl) { if (w) w.close(); alert("Couldn't open that file: " + (error?.message || "unknown error")); return; }
+  if (w) w.location.href = data.signedUrl; else window.location.href = data.signedUrl;
+}
+
+function BillModal({ bill, prefill, suppliers, jobs, purchaseOrders, onSave, onClose }) {
+  const src = bill || prefill || {};
+  const [supplierId, setSupplierId] = useState(src.supplierId || "");
+  const [supplierName, setSupplierName] = useState(src.supplierName || "");
+  const [invoiceNumber, setInvoiceNumber] = useState(src.invoiceNumber || "");
+  const [invoiceDate, setInvoiceDate] = useState(src.invoiceDate || todayISO());
+  const [dueDate, setDueDate] = useState(src.dueDate || computeDueDate(src.invoiceDate || todayISO(), { invoiceDueMode: "monthday", invoiceDueValue: 20 }));
+  const [dueTouched, setDueTouched] = useState(!!bill);
+  const [amount, setAmount] = useState(src.amount != null && src.amount !== "" ? String(src.amount) : "");
+  const [jobId, setJobId] = useState(src.jobId || "");
+  const [notes, setNotes] = useState(src.notes || "");
+  const [attachments, setAttachments] = useState(bill?.attachments || []);
+  const [removedPaths, setRemovedPaths] = useState([]);
+  const [newFiles, setNewFiles] = useState([]);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const fileRef = useRef(null);
+  const linkedPO = (purchaseOrders || []).find(p => p.id === src.poId);
+  const linkedCost = src.costId ? (jobs || []).flatMap(j => j.jobCosts || []).find(c => c.id === src.costId) : null;
+
+  const save = async () => {
+    if (!supplierId && !supplierName.trim()) { setError("Choose a supplier or type a supplier name."); return; }
+    const amt = parseFloat(amount);
+    if (isNaN(amt) || amt <= 0) { setError("Enter the bill amount."); return; }
+    const jid = jobId.trim();
+    if (jid && !jobs.some(j => j.id === jid)) { setError("That job number wasn't found. Pick one from the list, or leave it blank."); return; }
+    setSaving(true); setError("");
+    const id = bill?.id || bid();
+    try {
+      const uploaded = newFiles.length ? await uploadBillFiles(id, newFiles) : [];
+      if (removedPaths.length) await supabase.storage.from(BILL_BUCKET).remove(removedPaths);
+      onSave({
+        id, supplierId: supplierId || null, supplierName: supplierId ? "" : supplierName.trim(),
+        invoiceNumber: invoiceNumber.trim(), invoiceDate: invoiceDate || null, dueDate: dueDate || null,
+        amount: amt, jobId: jid || null, poId: src.poId || null, costId: src.costId || null,
+        status: bill?.status || "unpaid", paidDate: bill?.paidDate || null, notes: notes.trim(),
+        attachments: [...attachments, ...uploaded],
+      });
+    } catch (err) {
+      setError("Couldn't save: " + (err.message || err));
+      setSaving(false);
+    }
+  };
+
+  const labelStyle = { display: "block", fontSize: 12, fontWeight: 700, color: "var(--text-secondary)", marginBottom: 5, textTransform: "uppercase", letterSpacing: 0.5 };
+  return (
+    <Modal title={bill ? "Edit Bill" : "New Bill"} onClose={onClose} wide>
+      {(linkedPO || linkedCost) && (
+        <div style={{ background: "var(--bg-subtle)", borderRadius: 8, padding: "8px 12px", marginBottom: 14, fontSize: 12, color: "var(--text-secondary)" }}>
+          {linkedPO && <div>Linked to purchase order <b>{linkedPO.poNumber}</b></div>}
+          {linkedCost && <div>Linked to additional cost <b>{linkedCost.label}</b></div>}
+        </div>
+      )}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0 16px" }}>
+        <Sel label="Supplier" value={supplierId} onChange={e => { setSupplierId(e.target.value); setError(""); }}
+          options={[{ value: "", label: "— Select supplier —" }, ...suppliers.map(s => ({ value: s.id, label: s.name }))]} />
+        {!supplierId
+          ? <Inp label="…or type a supplier name" value={supplierName} onChange={e => { setSupplierName(e.target.value); setError(""); }} placeholder="Not in Contacts yet" />
+          : <div />}
+        <Inp label="Supplier Invoice No." value={invoiceNumber} onChange={e => setInvoiceNumber(e.target.value)} placeholder="Their invoice number" />
+        <Inp label="Amount (ex. GST)" type="number" step="0.01" min="0" value={amount} onChange={e => { setAmount(e.target.value); setError(""); }} placeholder="0.00" />
+        <Inp label="Invoice Date" type="date" value={invoiceDate} onChange={e => { setInvoiceDate(e.target.value); if (!dueTouched && e.target.value) setDueDate(computeDueDate(e.target.value, { invoiceDueMode: "monthday", invoiceDueValue: 20 })); }} />
+        <Inp label="Due Date" type="date" value={dueDate} onChange={e => { setDueDate(e.target.value); setDueTouched(true); }} />
+      </div>
+      <Inp label="Job (optional)" list="bill-job-list" value={jobId} onChange={e => { setJobId(e.target.value); setError(""); }} placeholder="Start typing a job number" />
+      <datalist id="bill-job-list">
+        {jobs.map(j => <option key={j.id} value={j.id}>{j.title}{j.client ? ` — ${j.client}` : ""}</option>)}
+      </datalist>
+
+      <div style={{ marginBottom: 14 }}>
+        <label style={labelStyle}>Notes</label>
+        <textarea value={notes} onChange={e => setNotes(e.target.value)} rows={2} placeholder="Anything worth remembering about this bill"
+          style={{ width: "100%", border: "1.5px solid var(--border-strong)", borderRadius: 8, padding: "9px 12px", fontSize: 14, background: "var(--bg-subtle)", boxSizing: "border-box", resize: "vertical", outline: "none", color: "var(--text-primary)", fontFamily: "'Inter',system-ui,sans-serif" }} />
+      </div>
+
+      <div style={{ marginBottom: 16 }}>
+        <label style={labelStyle}>Attachments</label>
+        {attachments.map(a => (
+          <div key={a.path} style={{ display: "flex", alignItems: "center", gap: 10, padding: "6px 0", fontSize: 13 }}>
+            <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "var(--text-primary)" }}>📎 {a.name} <span style={{ color: "var(--text-muted)", fontSize: 11 }}>{fmtSize(a.size)}</span></span>
+            <Btn variant="secondary" style={{ padding: "4px 10px", fontSize: 12 }} onClick={() => openBillFile(a)}>View</Btn>
+            <Btn variant="danger" style={{ padding: "4px 10px", fontSize: 12 }} onClick={() => { setAttachments(p => p.filter(x => x.path !== a.path)); setRemovedPaths(p => [...p, a.path]); }}>Remove</Btn>
+          </div>
+        ))}
+        {newFiles.map((f, i) => (
+          <div key={i} style={{ display: "flex", alignItems: "center", gap: 10, padding: "6px 0", fontSize: 13 }}>
+            <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "var(--text-primary)" }}>📎 {f.name} <span style={{ color: "var(--text-muted)", fontSize: 11 }}>{fmtSize(f.size)} · uploads when you save</span></span>
+            <Btn variant="secondary" style={{ padding: "4px 10px", fontSize: 12 }} onClick={() => setNewFiles(p => p.filter((_, j) => j !== i))}>Remove</Btn>
+          </div>
+        ))}
+        <input ref={fileRef} type="file" multiple style={{ display: "none" }}
+          onChange={e => { const picked = Array.from(e.target.files || []); setNewFiles(p => [...p, ...picked]); e.target.value = ""; }} />
+        <button type="button" onClick={() => fileRef.current?.click()} style={{ marginTop: 6, background: "none", border: "1.5px dashed var(--border-strong)", borderRadius: 8, padding: "8px 0", width: "100%", color: "var(--text-secondary)", fontSize: 13, fontWeight: 600, cursor: "pointer" }}>+ Attach supplier invoice or other files</button>
+      </div>
+
+      {error && <div style={{ fontSize: 12, color: "#DC2626", marginBottom: 14 }}>{error}</div>}
+      <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
+        <Btn variant="secondary" onClick={onClose}>Cancel</Btn>
+        <Btn onClick={save} disabled={saving}>{saving ? "Saving…" : (bill ? "Save Changes" : "Create Bill")}</Btn>
+      </div>
+    </Modal>
+  );
+}
+
+// Keeps a PO's billed cost (and so the job card) equal to the amount on its linked bill.
+function syncPOFromBill(setPurchaseOrders, bill) {
+  if (!bill.poId) return;
+  setPurchaseOrders(prev => prev.map(p => p.id === bill.poId && (p.status !== "billed" || p.billedCost !== bill.amount) ? { ...p, status: "billed", billedCost: bill.amount } : p));
+}
+
+// Opens the bill for a purchase order: edits the existing bill if one is linked, otherwise starts a new one pre-filled from the PO.
+function POBillModal({ po, bills, setBills, setPurchaseOrders, suppliers, jobs, purchaseOrders, onClose }) {
+  const existing = bills.find(b => b.poId === po.id);
+  return (
+    <BillModal bill={existing || null}
+      prefill={existing ? null : { supplierId: po.supplierId, jobId: po.jobId, poId: po.id, amount: po.billedCost, notes: po.reference ? `${po.poNumber} — ${po.reference}` : po.poNumber }}
+      suppliers={suppliers} jobs={jobs} purchaseOrders={purchaseOrders}
+      onSave={(b) => { setBills(prev => prev.some(x => x.id === b.id) ? prev.map(x => x.id === b.id ? b : x) : [...prev, b]); syncPOFromBill(setPurchaseOrders, b); onClose(); }}
+      onClose={onClose} />
+  );
+}
+
+function BillsView({ bills, setBills, setPurchaseOrders, suppliers, jobs, purchaseOrders }) {
+  const [filter, setFilter] = useState("unpaid"); // unpaid | overdue | paid | all
+  const [billFromPO, setBillFromPO] = useState(null);
+  const [search, setSearch] = useState("");
+  const [editing, setEditing] = useState(null); // bill object, "new", or null
+  const [deleting, setDeleting] = useState(null);
+
+  const supplierLabel = (b) => suppliers.find(s => s.id === b.supplierId)?.name || b.supplierName || "—";
+  const unpaid = bills.filter(b => b.status !== "paid");
+  const overdue = bills.filter(isBillOverdue);
+  const sumOf = (list) => list.reduce((s, b) => s + (b.amount || 0), 0);
+  const unbilledPOs = purchaseOrders.filter(p => p.status === "billed" && !bills.some(b => b.poId === p.id));
+
+  const rows = bills
+    .filter(b => filter === "all" ? true : filter === "paid" ? b.status === "paid" : filter === "overdue" ? isBillOverdue(b) : b.status !== "paid")
+    .filter(b => {
+      if (!search) return true;
+      const q = search.toLowerCase();
+      return supplierLabel(b).toLowerCase().includes(q) || (b.invoiceNumber || "").toLowerCase().includes(q) || (b.jobId || "").toLowerCase().includes(q) || (b.notes || "").toLowerCase().includes(q);
+    })
+    .sort((a, b) => filter === "paid" || filter === "all" ? (b.dueDate || "") < (a.dueDate || "") ? -1 : 1 : (a.dueDate || "9999") < (b.dueDate || "9999") ? -1 : 1);
+
+  const saveBill = (b) => {
+    syncPOFromBill(setPurchaseOrders, b);
+    setBills(prev => prev.some(x => x.id === b.id) ? prev.map(x => x.id === b.id ? b : x) : [...prev, b]);
+    setEditing(null);
+  };
+  const togglePaid = (b) => setBills(prev => prev.map(x => x.id === b.id ? { ...x, status: x.status === "paid" ? "unpaid" : "paid", paidDate: x.status === "paid" ? null : todayISO() } : x));
+  const deleteBill = async (b) => {
+    setBills(prev => prev.filter(x => x.id !== b.id));
+    setDeleting(null);
+    const paths = (b.attachments || []).map(a => a.path);
+    if (paths.length) { try { await supabase.storage.from(BILL_BUCKET).remove(paths); } catch (e) { /* file clean-up is best effort */ } }
+  };
+
+  const chip = (id, label, count) => (
+    <button key={id} onClick={() => setFilter(id)} style={{ padding: "7px 16px", border: "none", borderRadius: 8, background: filter === id ? ACCENT : "transparent", color: filter === id ? INK : "#5C6B82", fontWeight: 700, fontSize: 13, cursor: "pointer" }}>{label}{count != null ? ` (${count})` : ""}</button>
+  );
+
+  return (
+    <div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20, gap: 12, flexWrap: "wrap" }}>
+        <div>
+          <h1 style={{ fontSize: 24, fontWeight: 900, color: "var(--text-primary)", margin: "0 0 4px" }}>Bills</h1>
+          <p style={{ color: "var(--text-secondary)", fontSize: 14, margin: 0 }}>Supplier invoices you owe — {fmtMoney(sumOf(unpaid))} unpaid{overdue.length ? `, ${fmtMoney(sumOf(overdue))} overdue` : ""}</p>
+        </div>
+        <Btn onClick={() => setEditing("new")}>+ New Bill</Btn>
+      </div>
+
+      {unbilledPOs.length > 0 && (
+        <div style={{ background: "#F59E0B18", border: "1.5px solid #F59E0B55", borderRadius: 12, padding: "12px 16px", marginBottom: 16 }}>
+          <div style={{ fontSize: 13, fontWeight: 800, color: "var(--text-primary)", marginBottom: 8 }}>{unbilledPOs.length} billed purchase order{unbilledPOs.length !== 1 ? "s" : ""} not recorded as a bill yet</div>
+          {unbilledPOs.map(po => (
+            <div key={po.id} style={{ display: "flex", alignItems: "center", gap: 12, padding: "4px 0", fontSize: 13, flexWrap: "wrap" }}>
+              <span style={{ fontWeight: 700, color: ACCENT_TEXT, minWidth: 80 }}>{po.poNumber}</span>
+              <span style={{ flex: 1, minWidth: 120, color: "var(--text-secondary)" }}>{suppliers.find(s => s.id === po.supplierId)?.name || "Unknown supplier"} · {po.jobId}</span>
+              <span style={{ fontWeight: 700, color: "var(--text-primary)" }}>{fmtMoney(po.billedCost)}</span>
+              <Btn variant="secondary" style={{ padding: "4px 12px", fontSize: 12 }} onClick={() => setBillFromPO(po)}>+ Add bill</Btn>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div style={{ display: "flex", gap: 12, alignItems: "center", marginBottom: 16, flexWrap: "wrap" }}>
+        <div style={{ display: "flex", gap: 4, background: "var(--card-bg)", borderRadius: 10, padding: 4, boxShadow: "0 1px 4px #1C233310" }}>
+          {chip("unpaid", "Unpaid", unpaid.length)}
+          {chip("overdue", "Overdue", overdue.length)}
+          {chip("paid", "Paid")}
+          {chip("all", "All")}
+        </div>
+        <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search supplier, invoice no. or job…"
+          style={{ flex: 1, minWidth: 200, maxWidth: 340, border: "1.5px solid var(--border-strong)", borderRadius: 8, padding: "9px 12px", fontSize: 14, color: "var(--text-primary)", outline: "none", background: "var(--card-bg)", boxSizing: "border-box" }} />
+      </div>
+
+      <style>{`
+        .bill-row { display: grid; grid-template-columns: 100px minmax(0,1.3fr) minmax(0,1fr) 100px 110px 110px auto; column-gap: 14px; align-items: center; justify-items: start; }
+        @media (max-width: 767px) { .bill-row { display: flex; flex-wrap: wrap; gap: 10px; } }
+      `}</style>
+      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        {rows.map(b => {
+          const late = isBillOverdue(b);
+          const paid = b.status === "paid";
+          const color = paid ? "#10B981" : late ? "#DC2626" : "#F59E0B";
+          const po = b.poId ? purchaseOrders.find(p => p.id === b.poId) : null;
+          return (
+            <div key={b.id} className="bill-row" style={{ background: "var(--card-bg)", borderRadius: 12, padding: "12px 16px", boxShadow: "0 1px 4px #1C233310" }}>
+              <div style={{ fontSize: 13, fontWeight: 700, color: late ? "#DC2626" : "var(--text-primary)" }}>{paid ? "Paid" : "Due"} {formatDate(paid ? b.paidDate : b.dueDate)}</div>
+              <div style={{ minWidth: 0 }}>
+                <div style={{ fontSize: 14, fontWeight: 700, color: "var(--text-primary)" }}>{supplierLabel(b)}</div>
+                {po && <div style={{ fontSize: 11, color: "var(--text-muted)" }}>{po.poNumber}</div>}
+              </div>
+              <div style={{ fontSize: 13, color: "var(--text-secondary)", minWidth: 0 }}>{b.invoiceNumber || "—"}{(b.attachments || []).length > 0 && <span style={{ marginLeft: 6, fontSize: 11 }}>📎{b.attachments.length}</span>}</div>
+              <div style={{ fontSize: 13, color: "var(--text-secondary)" }}>{b.jobId || "—"}</div>
+              <div style={{ fontSize: 14, fontWeight: 800, color: "var(--text-primary)" }}>{fmtMoney(b.amount)}</div>
+              <button onClick={() => togglePaid(b)} title={paid ? "Click to mark as unpaid" : "Click to mark as paid"}
+                style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "4px 10px", borderRadius: 99, border: "1.5px solid " + color, background: color + "18", color, fontWeight: 800, fontSize: 11, textTransform: "uppercase", letterSpacing: 0.3, cursor: "pointer" }}>
+                <span style={{ width: 7, height: 7, borderRadius: "50%", background: color }} />{paid ? "Paid" : late ? "Overdue" : "Unpaid"}
+              </button>
+              <div style={{ display: "flex", gap: 8 }}>
+                <Btn variant="secondary" onClick={() => setEditing(b)}>Edit</Btn>
+                <Btn variant="danger" onClick={() => setDeleting(b)}>Delete</Btn>
+              </div>
+            </div>
+          );
+        })}
+        {rows.length === 0 && <div style={{ textAlign: "center", color: "var(--text-muted)", padding: 40, fontSize: 14, background: "var(--card-bg)", borderRadius: 12 }}>{bills.length === 0 ? "No bills yet. Click “+ New Bill” to add your first supplier invoice." : "No bills match this view."}</div>}
+      </div>
+
+      {billFromPO && <POBillModal po={billFromPO} bills={bills} setBills={setBills} setPurchaseOrders={setPurchaseOrders} suppliers={suppliers} jobs={jobs} purchaseOrders={purchaseOrders} onClose={() => setBillFromPO(null)} />}
+      {editing && (
+        <BillModal bill={editing === "new" ? null : editing} suppliers={suppliers} jobs={jobs} purchaseOrders={purchaseOrders} onSave={saveBill} onClose={() => setEditing(null)} />
+      )}
+      {deleting && (
+        <Modal title="Delete this bill?" onClose={() => setDeleting(null)}>
+          <p style={{ fontSize: 14, color: "var(--text-secondary)", marginTop: 0 }}>{supplierLabel(deleting)} · {fmtMoney(deleting.amount)}{deleting.invoiceNumber ? ` · ${deleting.invoiceNumber}` : ""}. Any attached files are deleted too. This can't be undone.</p>
+          <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
+            <Btn variant="secondary" onClick={() => setDeleting(null)}>Cancel</Btn>
+            <Btn variant="danger" onClick={() => deleteBill(deleting)}>Delete</Btn>
+          </div>
+        </Modal>
+      )}
+    </div>
+  );
+}
 function ComingSoonView({ title, description, icon }) {
   return (
     <div>
@@ -3153,7 +3424,7 @@ function ComingSoonView({ title, description, icon }) {
   );
 }
 
-function PurchaseOrdersView({ jobs, staff, customers, suppliers, purchaseOrders, setPurchaseOrders, company, settings, onOpenJob }) {
+function PurchaseOrdersView({ bills, setBills, jobs, staff, customers, suppliers, purchaseOrders, setPurchaseOrders, company, settings, onOpenJob }) {
   const [search, setSearch] = useState("");
   const [pickingJob, setPickingJob] = useState(false);
   const [creatingForJob, setCreatingForJob] = useState(null);
@@ -3183,7 +3454,7 @@ function PurchaseOrdersView({ jobs, staff, customers, suppliers, purchaseOrders,
         </div>
         <Btn onClick={()=>setPickingJob(true)}>+ Create Purchase Order</Btn>
         <style>{`
-  .po-row { display: grid; grid-template-columns: 100px minmax(0,1fr) 170px 180px auto auto auto; column-gap: 14px; justify-items: start; }
+  .po-row { display: grid; grid-template-columns: 100px minmax(0,1fr) 170px 240px auto auto auto; column-gap: 14px; justify-items: start; }
   @media (max-width: 767px) { .po-row { display: flex; flex-wrap: wrap; gap: 12px; } }
 `}</style>
       </div>
@@ -3781,17 +4052,18 @@ function AddCostRow({ onAdd, onCancel }) {
   );
 }
 
-function JobCostsPage({ job, suppliers, purchaseOrders, setPurchaseOrders, setJobs, company, settings, onBack }) {
+function JobCostsPage({ jobs, bills, setBills, job, suppliers, purchaseOrders, setPurchaseOrders, setJobs, company, settings, onBack }) {
     const [showPOModal, setShowPOModal] = useState(false);
     const [printingPO, setPrintingPO] = useState(null);
     const deletePO = (poId) => { setPurchaseOrders(prev => prev.filter(p => p.id !== poId)); setDeletingPO(null); };
     const [billingPO, setBillingPO] = useState(null);
     const [deletingPO, setDeletingPO] = useState(null);const [editingPO, setEditingPO] = useState(null);
+  const [billFormPO, setBillFormPO] = useState(null);
   const [addingCost, setAddingCost] = useState(false);
   const jobPOs = (purchaseOrders||[]).filter(p=>p.jobId===job.id).sort((a,b)=> a.dateCreated<b.dateCreated?1:-1);
   const jobCosts = (job.jobCosts||[]).slice().sort((a,b)=> a.createdAt<b.createdAt?1:-1);
   const addPO = (po) => { setPurchaseOrders(prev=>[...prev, { ...po, poNumber: nextPONumber(prev) }]); setShowPOModal(false); };
-  const updatePO = (updated) => { setPurchaseOrders(prev=>prev.map(p=>p.id===updated.id?updated:p)); setBillingPO(null); };
+  const updatePO = (updated) => { setPurchaseOrders(prev=>prev.map(p=>p.id===updated.id?updated:p)); setBillingPO(null); if (updated.status === "billed") { setBills(prev => prev.map(b => b.poId === updated.id && b.amount !== updated.billedCost ? { ...b, amount: updated.billedCost } : b)); if (!bills.some(b => b.poId === updated.id)) setBillFormPO(updated); } };
     const addCost = (cost) => { setJobs(prev => prev.map(j => j.id === job.id ? { ...j, jobCosts: [...(j.jobCosts || []), cost] } : j)); setAddingCost(false); };
   const removeCost = (costId) => setJobs(prev=>prev.map(j=>j.id===job.id?{...j, jobCosts:(j.jobCosts||[]).filter(c=>c.id!==costId)}:j));
 
@@ -3832,7 +4104,10 @@ function JobCostsPage({ job, suppliers, purchaseOrders, setPurchaseOrders, setJo
                     <div style={{ fontSize:12, color:"var(--text-secondary)", marginTop:2 }}>{po.reference || po.details.slice(0,70)}</div>
                   </div>
                   <div style={{ fontSize:11, color:"var(--text-muted)" }}>{formatDate(po.dateCreated)}</div>
-                        <POStatusBadge po={po} onClick={() => setBillingPO(po)} />
+                        <div style={{ display:"flex", alignItems:"center", gap:8, flexWrap:"wrap" }}>
+                  <POStatusBadge po={po} onClick={() => setBillingPO(po)} />
+                  {po.status === "billed" && <button onClick={() => setBillFormPO(po)} style={{ background:"none", border:"1.5px solid var(--border-strong)", borderRadius:99, padding:"3px 10px", fontSize:11, fontWeight:700, color: bills.some(b => b.poId === po.id) ? "#10B981" : ACCENT_TEXT, cursor:"pointer" }}>{bills.some(b => b.poId === po.id) ? "Bill ✓" : "+ Bill"}</button>}
+                </div>
                         <Btn variant="secondary" onClick={() => setPrintingPO(po)}>View / Print</Btn>
                         <Btn variant="secondary" onClick={() => setEditingPO(po)}>Edit</Btn>
                         <Btn variant="danger" onClick={() => setDeletingPO(po)}>Delete</Btn>
@@ -3882,6 +4157,7 @@ function JobCostsPage({ job, suppliers, purchaseOrders, setPurchaseOrders, setJo
       {showPOModal && (
         <PurchaseOrderModal job={job} suppliers={suppliers} purchaseOrders={purchaseOrders} onSave={addPO} onClose={()=>setShowPOModal(false)} />
       )}
+            {billFormPO && <POBillModal po={billFormPO} bills={bills} setBills={setBills} setPurchaseOrders={setPurchaseOrders} suppliers={suppliers} jobs={jobs} purchaseOrders={purchaseOrders} onClose={() => setBillFormPO(null)} />}
             {editingPO && <PurchaseOrderModal job={{ id: editingPO.jobId, title: "" }} suppliers={suppliers} purchaseOrders={purchaseOrders} editingPO={editingPO} onSave={(u) => { setPurchaseOrders(prev => prev.map(p => p.id === u.id ? u : p)); setEditingPO(null); }} onClose={() => setEditingPO(null)} />}{printingPO && (
                 <POPrintView po={printingPO} job={job} supplier={suppliers.find(s => s.id === printingPO.supplierId)} company={company} settings={settings} onClose={() => setPrintingPO(null)} />
             )}
@@ -4762,6 +5038,7 @@ export default function App() {
     const [timeEntries, setTimeEntries, setTimeEntriesSilently] = useSyncedTable("time_entries", timeEntryMap, showSyncError);
     const [purchaseOrders, setPurchaseOrders, setPurchaseOrdersSilently] = useSyncedTable("purchase_orders", poMap, showSyncError);
       const [invoices, setInvoices, setInvoicesSilently] = useSyncedTable("invoices", invoiceMap, showSyncError);
+    const [bills, setBills, setBillsSilently] = useSyncedTable("bills", billMap, showSyncError);
     const [company, setCompany, setCompanySilently] = useSyncedSingleton("company", companyMap, INITIAL_COMPANY, showSyncError);
     const [settings, setSettings, setSettingsSilently] = useSyncedSingleton("settings", settingsMap, INITIAL_SETTINGS, showSyncError);
     const [schedulerDataObj, setSchedulerDataObj, setSchedulerDataObjSilently] = useSyncedSingleton("scheduler_data", schedulerDataMap, { scheduleData: {} }, showSyncError);
@@ -4820,6 +5097,7 @@ export default function App() {
                 if (data.schedulerData) setSchedulerDataObjSilently(data.schedulerData);
                 if (data.offsiteTracker) setOffsiteTrackerSilently(data.offsiteTracker);
                         setInvoicesSilently(data.invoices);
+                setBillsSilently(data.bills);
             } catch (err) {
                 if (!cancelled) setDataError(err.message || "Something went wrong loading your data.");
             } finally {
@@ -4964,7 +5242,7 @@ syncCustomStatuses(settings.customStatuses);
               <JobNotesPage job={currentJob} setJobs={setJobs} company={company} onBack={popJobPage}/>
             )}
             {currentJobPage.view === "costs" && (
-              <JobCostsPage job={currentJob} suppliers={suppliers} purchaseOrders={purchaseOrders} setPurchaseOrders={setPurchaseOrders} setJobs={setJobs} company={company} settings={settings} onBack={popJobPage}/>
+              <JobCostsPage jobs={jobs} bills={bills} setBills={setBills} job={currentJob} suppliers={suppliers} purchaseOrders={purchaseOrders} setPurchaseOrders={setPurchaseOrders} setJobs={setJobs} company={company} settings={settings} onBack={popJobPage}/>
             )}
             {currentJobPage.view === "invoices" && (
               <JobInvoicesPage job={currentJob} staff={staff} roles={roles} customers={customers} timeEntries={timeEntries} purchaseOrders={purchaseOrders} invoices={invoices} setInvoices={setInvoices} company={company} settings={settings} onBack={popJobPage}/>
@@ -4978,9 +5256,9 @@ syncCustomStatuses(settings.customStatuses);
                           {tab === "schedule" && <SchedulerView jobs={jobs} staff={staff} roles={roles} settings={settings} scheduleData={schedulerDataObj.scheduleData} setScheduleData={setScheduleData} />}
                           {tab === "followup" && <FollowUpView jobs={jobs} staff={staff} onEdit={j => openJob(j.id)} onBack={() => setTab("dashboard")} />}
             {tab==="timesheets"&& <TimesheetsView jobs={jobs} staff={staff} roles={roles} timeEntries={timeEntries} setTimeEntries={setTimeEntries} settings={settings}/>}
-            {tab==="purchaseorders" && <PurchaseOrdersView jobs={jobs} staff={staff} customers={customers} suppliers={suppliers} purchaseOrders={purchaseOrders} setPurchaseOrders={setPurchaseOrders} company={company} settings={settings} onOpenJob={j=>openJob(j.id)}/>}
+            {tab==="purchaseorders" && <PurchaseOrdersView bills={bills} setBills={setBills} jobs={jobs} staff={staff} customers={customers} suppliers={suppliers} purchaseOrders={purchaseOrders} setPurchaseOrders={setPurchaseOrders} company={company} settings={settings} onOpenJob={j=>openJob(j.id)}/>}
             {tab==="quotes"    && <ComingSoonView title="Quotes" description="Send customers a priced quote before the work begins." icon="▧"/>}
-            {tab==="invoices"  && <InvoicesView jobs={jobs} customers={customers} invoices={invoices} setInvoices={setInvoices} staff={staff} roles={roles} timeEntries={timeEntries} purchaseOrders={purchaseOrders} company={company} settings={settings} onOpenJob={j=>openJob(j.id)}/>}            {tab==="bills"     && <ComingSoonView title="Bills" description="Track what you owe suppliers for purchase orders and materials." icon="▨"/>}
+            {tab==="invoices"  && <InvoicesView jobs={jobs} customers={customers} invoices={invoices} setInvoices={setInvoices} staff={staff} roles={roles} timeEntries={timeEntries} purchaseOrders={purchaseOrders} company={company} settings={settings} onOpenJob={j=>openJob(j.id)}/>}            {tab==="bills"     && <BillsView bills={bills} setBills={setBills} setPurchaseOrders={setPurchaseOrders} suppliers={suppliers} jobs={jobs} purchaseOrders={purchaseOrders}/>}
                           {tab === "offsite" && <OffsiteView cols={offsiteTracker.cols} setCols={setOffsiteCols} data={offsiteTracker.data} setData={setOffsiteData} allocated={offsiteTracker.allocated} setAllocated={setOffsiteAllocated} />}
             {tab==="assets"    && <AssetsView assets={assets} setAssets={setAssets} groups={assetGroups} setGroups={setAssetGroups} staff={staff} settings={settings} setSettings={setSettings}/>}
             {tab==="contacts"  && <ContactsView customers={customers} setCustomers={setCustomers} suppliers={suppliers} setSuppliers={setSuppliers} company={company} setCompany={setCompany}/>}

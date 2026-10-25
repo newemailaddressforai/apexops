@@ -12,6 +12,22 @@ const offsiteTrackerMap = {
     toRow: (o) => ({ id: "main", cols: o.cols || [], data: o.data || {}, allocated: o.allocated || {} }),
     fromRow: (r) => ({ cols: r.cols || [], data: r.data || {}, allocated: r.allocated || {} }),
 };
+const billMap = {
+  toRow: (b) => ({
+    id: b.id, supplier_id: b.supplierId || null, supplier_name: b.supplierName || "",
+    invoice_number: b.invoiceNumber || "", invoice_date: b.invoiceDate || null, due_date: b.dueDate || null,
+    amount: b.amount || 0, job_id: b.jobId || null, po_id: b.poId || null, cost_id: b.costId || null,
+    status: b.status || "unpaid", paid_date: b.paidDate || null, notes: b.notes || "", attachments: b.attachments || [],
+  }),
+  fromRow: (r) => ({
+    id: r.id, supplierId: r.supplier_id, supplierName: r.supplier_name || "",
+    invoiceNumber: r.invoice_number || "", invoiceDate: r.invoice_date, dueDate: r.due_date,
+    amount: Number(r.amount) || 0, jobId: r.job_id, poId: r.po_id, costId: r.cost_id,
+    status: r.status || "unpaid", paidDate: r.paid_date, notes: r.notes || "", attachments: r.attachments || [],
+    createdAt: r.created_at?.split("T")[0],
+  }),
+};
+
 const invoiceMap = {
   toRow: (i) => ({
     id: i.id, invoice_number: i.invoiceNumber, job_id: i.jobId || null, customer_name: i.customerName || "",
@@ -286,7 +302,7 @@ export async function fetchAllData() {
       const [
     staffRes, rolesRes, customersRes, suppliersRes, companyRes, settingsRes,
     jobsRes, jobNotesRes, jobCostsRes, timeEntriesRes, poRes, assetsRes, assetGroupsRes,
-    schedulerRes, offsiteRes, invoicesRes,
+    schedulerRes, offsiteRes, invoicesRes, billsRes,
   ] = await Promise.all([
         supabase.from("staff").select("*"),
         supabase.from("roles").select("*"),
@@ -304,9 +320,10 @@ export async function fetchAllData() {
     supabase.from("scheduler_data").select("*").eq("id", "main").maybeSingle(),
     supabase.from("offsite_tracker").select("*").eq("id", "main").maybeSingle(),
     supabase.from("invoices").select("*"),
+    supabase.from("bills").select("*"),
     ]);
 
-  const firstError = [staffRes, rolesRes, customersRes, suppliersRes, companyRes, settingsRes, jobsRes, jobNotesRes, jobCostsRes, timeEntriesRes, poRes, assetsRes, assetGroupsRes, schedulerRes, offsiteRes, invoicesRes].find(r => r.error);  if (firstError?.error) throw firstError.error;
+  const firstError = [staffRes, rolesRes, customersRes, suppliersRes, companyRes, settingsRes, jobsRes, jobNotesRes, jobCostsRes, timeEntriesRes, poRes, assetsRes, assetGroupsRes, schedulerRes, offsiteRes, invoicesRes, billsRes].find(r => r.error);  if (firstError?.error) throw firstError.error;
 
   // Attach notes/costs onto their parent job
   const notesByJob = {};
@@ -335,6 +352,7 @@ export async function fetchAllData() {
             schedulerData: schedulerRes.data ? schedulerDataMap.fromRow(schedulerRes.data) : null,
     offsiteTracker: offsiteRes.data ? offsiteTrackerMap.fromRow(offsiteRes.data) : null,
     invoices: (invoicesRes.data || []).map(invoiceMap.fromRow),
+    bills: (billsRes.data || []).map(billMap.fromRow),
   };
 }
 
@@ -352,4 +370,4 @@ export async function ensureSingletonsExist(defaultCompany, defaultSettings, def
     const { data: existingOffsite } = await supabase.from("offsite_tracker").select("id").eq("id", "main").maybeSingle();
     if (!existingOffsite) await supabase.from("offsite_tracker").insert(offsiteTrackerMap.toRow(defaultOffsiteTracker));
 }
-export { staffMap, rolesMap, contactMap, companyMap, settingsMap, timeEntryMap, poMap, assetMap, assetGroupMap, jobCoreMap, jobNoteMap, jobCostMap, schedulerDataMap, offsiteTrackerMap, invoiceMap };
+export { staffMap, rolesMap, contactMap, companyMap, settingsMap, timeEntryMap, poMap, assetMap, assetGroupMap, jobCoreMap, jobNoteMap, jobCostMap, schedulerDataMap, offsiteTrackerMap, invoiceMap, billMap };
