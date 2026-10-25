@@ -1179,7 +1179,7 @@ function CellPicker({ jobs, onSelect, onClose }) {
     <div style={{ position: "absolute", zIndex: 500, background:"var(--card-bg)", border: "1.5px solid var(--border-strong)", borderRadius: 12, boxShadow: "0 8px 32px #1C233330", width: 300, overflow: "hidden" }}>
       {/* Toggle */}
       <div style={{ display: "flex", padding: 4, gap: 4, background: "var(--bg-page)" }}>
-        {[["job","Job"],["leave","Leave"]].map(([val,lbl]) => (
+        {[["job","Job"],["leave","Leave"],["text","Manual"]].map(([val,lbl]) => (
           <button key={val} onClick={() => { setMode(val); setSearch(""); }}
             style={{ flex: 1, padding: "8px 0", border: "none", borderRadius: 8, background: mode===val?ACCENT:"transparent", color: mode===val?INK:"#5C6B82", fontWeight: 700, fontSize: 13, cursor: "pointer", transition: "all .15s" }}>
             {lbl}
@@ -1188,13 +1188,18 @@ function CellPicker({ jobs, onSelect, onClose }) {
       </div>
 
       <div style={{ padding: "10px 12px", borderBottom: "1px solid #F1F4F8" }}>
-        <input ref={ref} value={search} onChange={e => setSearch(e.target.value)}
-          placeholder={mode==="job" ? "Search job number or description..." : "Search leave type..."}
+        <input ref={ref} value={search} onChange={e => setSearch(e.target.value)} onKeyDown={e => { if (mode === "text" && e.key === "Enter" && search.trim()) onSelect(`text:${search.trim()}`); }}
+          placeholder={mode==="job" ? "Search job number or description..." : mode==="text" ? "Type anything, e.g. Quoting at Nexcore" : "Search leave type..."}
           style={{ width: "100%", border: "1.5px solid var(--border-strong)", borderRadius: 7, padding: "7px 10px", fontSize: 13, outline: "none", boxSizing: "border-box" }} />
       </div>
 
       <div style={{ maxHeight: 220, overflowY: "auto" }}>
-        {mode === "leave" ? (
+        {mode === "text" ? (
+          <div style={{ padding: "12px 14px" }}>
+            <div style={{ fontSize: 12, color: "var(--text-secondary)", marginBottom: 10 }}>Type anything that isn't a job, e.g. "Workshop" or "Quoting at Nexcore", then press Enter.</div>
+            <Btn style={{ padding: "7px 14px", fontSize: 12 }} disabled={!search.trim()} onClick={() => onSelect(`text:${search.trim()}`)}>Add to schedule</Btn>
+          </div>
+        ) : mode === "leave" ? (
           <>
             {filteredLeave.length === 0 && <div style={{ padding: "10px 14px", fontSize: 12, color: "#C4CAD4" }}>No leave types match.</div>}
             {filteredLeave.map(lt => (
@@ -1266,7 +1271,7 @@ function SchedulerView({ jobs, staff: allStaff, roles, settings, scheduleData, s
     const getCellStyle = (val) => {
         if (!val) return null;
         if (val.startsWith("leave:")) { const lt = LEAVE_TYPES.find(l => l.id === val.replace("leave:", "")); return lt ? { bg: lt.bg, color: lt.color, label: lt.label } : null; }
-        if (val.startsWith("job:")) { const j = jobs.find(j => j.id === val.replace("job:", "")); const sm = STATUS_META[j?.status] || { color: ACCENT_TEXT }; return { bg: sm.color + "22", color: sm.color, label: val.replace("job:", ""), sublabel: j?.title || "" }; }
+        if (val.startsWith("text:")) { return { bg: "#64748B22", color: "#64748B", label: val.slice(5) }; } if (val.startsWith("job:")) { const j = jobs.find(j => j.id === val.replace("job:", "")); const sm = STATUS_META[j?.status] || { color: ACCENT_TEXT }; return { bg: sm.color + "22", color: sm.color, label: val.replace("job:", ""), sublabel: j?.title || "" }; }
         return null;
     };
 
@@ -1324,7 +1329,7 @@ function SchedulerView({ jobs, staff: allStaff, roles, settings, scheduleData, s
                                         return (
                                             <div key={ei} style={{ background: cs.bg, border: `1.5px solid ${cs.color}55`, borderLeft: `3px solid ${cs.color}`, borderRadius: 7, padding: "4px 7px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 4 }}>
                                                 <div style={{ overflow: "hidden", flex: 1 }}>
-                                                    <div style={{ fontSize: 11, fontWeight: 700, color: cs.color, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{cs.label}</div>
+                                                    <div title={cs.label} style={{ fontSize: 11, fontWeight: 700, color: cs.color, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: val.startsWith("text:") ? "normal" : "nowrap", wordBreak: "break-word" }}>{cs.label}</div>
                                                     {cs.sublabel && <div style={{ fontSize: 9, color: cs.color + "CC", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{cs.sublabel}</div>}
                                                 </div>
                                                 <span onClick={e => { e.stopPropagation(); removeFromCell(s.id, idx, val); }} style={{ fontSize: 13, color: cs.color + "88", lineHeight: 1, flexShrink: 0, cursor: "pointer" }}>×</span>
@@ -2015,16 +2020,17 @@ function ContactsView({ customers, setCustomers, suppliers, setSuppliers, compan
   );
 }
 
-// ─── PURCHASE ORDERS ──────────────────────────────────────────────────────────
-function PurchaseOrderModal({ job, suppliers, purchaseOrders, onSave, onClose }) {
-  const [supplierId, setSupplierId] = useState("");
-  const [reference, setReference] = useState("");
-  const [details, setDetails] = useState(`Work required for ${job.id} — ${job.title}`);
+// ─── PURCHASE ORDERS ─────────────────────────────────────────────────────────
+function PurchaseOrderModal({ job, suppliers, purchaseOrders, editingPO, onSave, onClose }) {
+  const [supplierId, setSupplierId] = useState(editingPO?.supplierId || "");
+  const [reference, setReference] = useState(editingPO?.reference || "");
+  const [dateCreated, setDateCreated] = useState(editingPO?.dateCreated || "");
+  const [details, setDetails] = useState(editingPO ? editingPO.details :`Work required for ${job.id} — ${job.title}`);
   const [error, setError] = useState("");
 
   const handleSave = () => {
     if (!supplierId) { setError("Please select a supplier."); return; }
-    if (!details.trim()) { setError("Please add details of the work needed."); return; }
+    if (!details.trim()) { setError("Please add details of the work needed."); return; } if (editingPO) { onSave({ ...editingPO, supplierId, reference: reference.trim(), details: details.trim(), dateCreated: dateCreated || editingPO.dateCreated }); return; }
     onSave({
       id: poid(),
       poNumber: nextPONumber(purchaseOrders),
@@ -2039,7 +2045,7 @@ function PurchaseOrderModal({ job, suppliers, purchaseOrders, onSave, onClose })
   };
 
   return (
-    <Modal title={`New Purchase Order — ${job.id}`} onClose={onClose}>
+    <Modal title={`${editingPO ? `Edit ${editingPO.poNumber}` : `New Purchase Order — ${job.id}`}`} onClose={onClose}>
       <div style={{ marginBottom:14 }}>
         <label style={{ display:"block",fontSize:12,fontWeight:700,color:"var(--text-secondary)",marginBottom:5,textTransform:"uppercase",letterSpacing:0.5 }}>Supplier</label>
         <select value={supplierId} onChange={e=>{ setSupplierId(e.target.value); if(error) setError(""); }} style={{ width:"100%",border:"1.5px solid var(--border-strong)",borderRadius:8,padding:"9px 12px",fontSize:14,color:"var(--text-primary)",outline:"none",background:"var(--bg-subtle)",boxSizing:"border-box" }}>
@@ -2048,6 +2054,7 @@ function PurchaseOrderModal({ job, suppliers, purchaseOrders, onSave, onClose })
         </select>
       </div>
       <Inp label="Reference" value={reference} onChange={e=>setReference(e.target.value)} placeholder="e.g. Retrofit steel supply"/>
+      {editingPO && <Inp label="PO Date" type="date" value={dateCreated} onChange={e=>setDateCreated(e.target.value)} />}
       <div style={{ marginBottom:8 }}>
         <label style={{ display:"block",fontSize:12,fontWeight:700,color:"var(--text-secondary)",marginBottom:5,textTransform:"uppercase",letterSpacing:0.5 }}>Details of Work / Goods Needed</label>
         <textarea value={details} onChange={e=>{ setDetails(e.target.value); if(error) setError(""); }} rows={4} placeholder="Describe what's being ordered..." style={{ width:"100%",border:"1.5px solid var(--border-strong)",borderRadius:8,padding:"9px 12px",fontSize:14,background:"var(--bg-subtle)",boxSizing:"border-box",resize:"vertical",outline:"none" }}/>
@@ -2055,7 +2062,7 @@ function PurchaseOrderModal({ job, suppliers, purchaseOrders, onSave, onClose })
       {error && <div style={{ fontSize:12, color:"#DC2626", marginBottom:14 }}>{error}</div>}
       <div style={{ display:"flex",gap:10,justifyContent:"flex-end" }}>
         <Btn variant="secondary" onClick={onClose}>Cancel</Btn>
-        <Btn onClick={handleSave}>Create Purchase Order</Btn>
+        <Btn onClick={handleSave}>{editingPO ? "Save Changes" : "Create Purchase Order"}</Btn>
       </div>
     </Modal>
   );
@@ -2164,7 +2171,6 @@ function POPrintView({ po, job, supplier, company, settings, onClose }) {
             <div style={{ fontSize:11, fontWeight:700, color:"#9CA3AF", textTransform:"uppercase", letterSpacing:0.5, marginBottom:8 }}>Job Reference</div>
             <div style={{ fontSize:14, fontWeight:700 }}>{job.id}</div>
             <div style={{ fontSize:13, color:"#5C6B82", marginTop:3 }}>{job.title}</div>
-            {job.client && <div style={{ fontSize:13, color:"#5C6B82", marginTop:3 }}>Client: {job.client}</div>}
             {po.reference && <div style={{ fontSize:13, color:"#5C6B82", marginTop:3 }}>PO Reference: {po.reference}</div>}
           </div>
         </div>
@@ -3102,6 +3108,7 @@ function PurchaseOrdersView({ jobs, staff, customers, suppliers, purchaseOrders,
   const [search, setSearch] = useState("");
   const [pickingJob, setPickingJob] = useState(false);
   const [creatingForJob, setCreatingForJob] = useState(null);
+  const [editingPO, setEditingPO] = useState(null);
     const [printingPO, setPrintingPO] = useState(null);
     const [billingPO, setBillingPO] = useState(null);
     const [deletingPO, setDeletingPO] = useState(null);
@@ -3115,7 +3122,7 @@ function PurchaseOrdersView({ jobs, staff, customers, suppliers, purchaseOrders,
     })
     .sort((a,b) => a.po.dateCreated < b.po.dateCreated ? 1 : -1);
 
-  const addPO = (po) => { setPurchaseOrders(prev=>[...prev, po]); setCreatingForJob(null); };
+  const addPO = (po) => { setPurchaseOrders(prev=>[...prev, { ...po, poNumber: nextPONumber(prev) }]); setCreatingForJob(null); };
   const updatePO = (updated) => { setPurchaseOrders(prev=>prev.map(p=>p.id===updated.id?updated:p)); setBillingPO(null); };
   const deletePO = (poId) => { setPurchaseOrders(prev => prev.filter(p=>p.id!==poId)); setDeletingPO(null); };
   return (
@@ -3126,13 +3133,17 @@ function PurchaseOrdersView({ jobs, staff, customers, suppliers, purchaseOrders,
           <p style={{ color:"var(--text-secondary)", fontSize:14, margin:0 }}>{purchaseOrders.length} purchase order{purchaseOrders.length!==1?"s":""} raised</p>
         </div>
         <Btn onClick={()=>setPickingJob(true)}>+ Create Purchase Order</Btn>
+        <style>{`
+  .po-row { display: grid; grid-template-columns: 100px minmax(0,1fr) 170px 180px auto auto auto; column-gap: 14px; justify-items: start; }
+  @media (max-width: 767px) { .po-row { display: flex; flex-wrap: wrap; gap: 12px; } }
+`}</style>
       </div>
 
       <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search PO number, job, supplier, or reference..." style={{ width:"100%", border:"1.5px solid var(--border-strong)", borderRadius:8, padding:"9px 14px", fontSize:14, outline:"none", background:"var(--card-bg)", color:"var(--text-primary)", boxSizing:"border-box", marginBottom:18 }} />
 
       <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
         {rows.map(({ po, job, supplier }) => (
-            <div key={po.id} style={{ background: "var(--card-bg)", borderRadius: 12, padding: "14px 18px", boxShadow: "0 1px 4px #1C233310", display: "flex", flexWrap: "wrap", alignItems: "center", gap: 16 }}>
+            <div key={po.id} className="po-row" style={{ background: "var(--card-bg)", borderRadius: 12, padding: "14px 18px", boxShadow: "0 1px 4px #1C233310", alignItems: "center" }}>
             <div style={{ minWidth:100 }}>
               <div style={{ fontSize:13, fontWeight:800, color:ACCENT_TEXT }}>{po.poNumber}</div>
               <div style={{ fontSize:11, color:"var(--text-muted)", marginTop:2 }}>{formatDate(po.dateCreated)}</div>
@@ -3151,7 +3162,7 @@ function PurchaseOrdersView({ jobs, staff, customers, suppliers, purchaseOrders,
               ) : <span style={{ fontSize:12, color:"var(--text-muted)" }}>{po.jobId} (deleted)</span>}
             </div>
                 <POStatusBadge po={po} onClick={() => setBillingPO(po)} />
-                <Btn variant="secondary" onClick={() => setPrintingPO(po)}>View / Print</Btn>
+                <Btn variant="secondary" onClick={() => setPrintingPO(po)}>View / Print</Btn><Btn variant="secondary" onClick={() => setEditingPO(po)}>Edit</Btn>
                 <Btn variant="danger" onClick={() => setDeletingPO(po)}>Delete</Btn>
             </div>
         ))}
@@ -3164,6 +3175,7 @@ function PurchaseOrdersView({ jobs, staff, customers, suppliers, purchaseOrders,
       {pickingJob && (
         <JobPickerModal jobs={jobs} onClose={()=>setPickingJob(false)} onSelect={(j)=>{ setPickingJob(false); setCreatingForJob(j); }} />
       )}
+      {editingPO && <PurchaseOrderModal job={{ id: editingPO.jobId, title: "" }} suppliers={suppliers} purchaseOrders={purchaseOrders} editingPO={editingPO} onSave={(u) => { setPurchaseOrders(prev => prev.map(p => p.id === u.id ? u : p)); setEditingPO(null); }} onClose={() => setEditingPO(null)} />}
       {creatingForJob && (
         <PurchaseOrderModal job={creatingForJob} suppliers={suppliers} purchaseOrders={purchaseOrders} onSave={addPO} onClose={()=>setCreatingForJob(null)} />
       )}
@@ -3725,11 +3737,11 @@ function JobCostsPage({ job, suppliers, purchaseOrders, setPurchaseOrders, setJo
     const [printingPO, setPrintingPO] = useState(null);
     const deletePO = (poId) => { setPurchaseOrders(prev => prev.filter(p => p.id !== poId)); setDeletingPO(null); };
     const [billingPO, setBillingPO] = useState(null);
-    const [deletingPO, setDeletingPO] = useState(null);
+    const [deletingPO, setDeletingPO] = useState(null);const [editingPO, setEditingPO] = useState(null);
   const [addingCost, setAddingCost] = useState(false);
   const jobPOs = (purchaseOrders||[]).filter(p=>p.jobId===job.id).sort((a,b)=> a.dateCreated<b.dateCreated?1:-1);
   const jobCosts = (job.jobCosts||[]).slice().sort((a,b)=> a.createdAt<b.createdAt?1:-1);
-  const addPO = (po) => { setPurchaseOrders(prev=>[...prev, po]); setShowPOModal(false); };
+  const addPO = (po) => { setPurchaseOrders(prev=>[...prev, { ...po, poNumber: nextPONumber(prev) }]); setShowPOModal(false); };
   const updatePO = (updated) => { setPurchaseOrders(prev=>prev.map(p=>p.id===updated.id?updated:p)); setBillingPO(null); };
     const addCost = (cost) => { setJobs(prev => prev.map(j => j.id === job.id ? { ...j, jobCosts: [...(j.jobCosts || []), cost] } : j)); setAddingCost(false); };
   const removeCost = (costId) => setJobs(prev=>prev.map(j=>j.id===job.id?{...j, jobCosts:(j.jobCosts||[]).filter(c=>c.id!==costId)}:j));
@@ -3773,6 +3785,7 @@ function JobCostsPage({ job, suppliers, purchaseOrders, setPurchaseOrders, setJo
                   <div style={{ fontSize:11, color:"var(--text-muted)" }}>{formatDate(po.dateCreated)}</div>
                         <POStatusBadge po={po} onClick={() => setBillingPO(po)} />
                         <Btn variant="secondary" onClick={() => setPrintingPO(po)}>View / Print</Btn>
+                        <Btn variant="secondary" onClick={() => setEditingPO(po)}>Edit</Btn>
                         <Btn variant="danger" onClick={() => setDeletingPO(po)}>Delete</Btn>
                     </div>
                 );
@@ -3820,7 +3833,7 @@ function JobCostsPage({ job, suppliers, purchaseOrders, setPurchaseOrders, setJo
       {showPOModal && (
         <PurchaseOrderModal job={job} suppliers={suppliers} purchaseOrders={purchaseOrders} onSave={addPO} onClose={()=>setShowPOModal(false)} />
       )}
-            {printingPO && (
+            {editingPO && <PurchaseOrderModal job={{ id: editingPO.jobId, title: "" }} suppliers={suppliers} purchaseOrders={purchaseOrders} editingPO={editingPO} onSave={(u) => { setPurchaseOrders(prev => prev.map(p => p.id === u.id ? u : p)); setEditingPO(null); }} onClose={() => setEditingPO(null)} />}{printingPO && (
                 <POPrintView po={printingPO} job={job} supplier={suppliers.find(s => s.id === printingPO.supplierId)} company={company} settings={settings} onClose={() => setPrintingPO(null)} />
             )}
             {deletingPO && (
