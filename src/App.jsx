@@ -1373,11 +1373,12 @@ function SchedulerView({ jobs, staff: allStaff, roles, settings, scheduleData, s
 }
 
 // ─── TIMESHEETS ───────────────────────────────────────────────────────────────
-function TimeEntryPicker({ jobs, editingEntry, onSave, onDelete, onClose }) {
+function TimeEntryPicker({ jobs, editingEntry, staffId, dayEntries, timeStep, onSave, onDelete, onClose }) {
   const isEditing = !!editingEntry;
   const [search, setSearch] = useState("");
   const [selectedJob, setSelectedJob] = useState(editingEntry ? jobs.find(j=>j.id===editingEntry.jobId) || null : null);
-  const [startTime, setStartTime] = useState(editingEntry?.startTime || "");
+  const lastEnd = (dayEntries || []).filter(t => !editingEntry || t.id !== editingEntry.id).map(t => t.endTime).filter(Boolean).sort().pop();
+  const [startTime, setStartTime] = useState(editingEntry?.startTime || lastEnd || "08:00");
   const [endTime, setEndTime] = useState(editingEntry?.endTime || "");
   const [timeError, setTimeError] = useState("");
   const [confirmingDelete, setConfirmingDelete] = useState(false);
@@ -1386,8 +1387,21 @@ function TimeEntryPicker({ jobs, editingEntry, onSave, onDelete, onClose }) {
   useEffect(() => { (selectedJob ? startRef : searchRef).current?.focus(); }, [selectedJob]);
 
   const activeJobs = jobs.filter(j => j.status !== "completed" || (editingEntry && j.id === editingEntry.jobId));
-  const filtered = activeJobs.filter(j => !search || j.id.toLowerCase().includes(search.toLowerCase()) || j.title.toLowerCase().includes(search.toLowerCase()));
+const q = search.toLowerCase();
+  const isMine = (j) => (j.assignedTo || []).includes(staffId);
+  const filtered = activeJobs
+    .filter(j => !q || j.id.toLowerCase().includes(q) || j.title.toLowerCase().includes(q) || (j.client || "").toLowerCase().includes(q) || (j.workOrderNo || "").toLowerCase().includes(q))
+    .sort((a, b) => (isMine(b) ? 1 : 0) - (isMine(a) ? 1 : 0));
 
+  // Adds time to the End field (or to Start if End is empty). Typing in the fields still overrides.
+  const addDuration = (mins) => {
+    if (!startTime) return;
+    const base = endTime ? timeToMinutes(endTime) : timeToMinutes(startTime);
+    const next = Math.min(base + mins, 23 * 60 + 59);
+    setEndTime(`${String(Math.floor(next / 60)).padStart(2, "0")}:${String(next % 60).padStart(2, "0")}`);
+    setTimeError("");
+  };
+  const quickBtns = [...new Set([timeStep || 15, 30, 60])].sort((a, b) => a - b);
   const computedHours = (startTime && endTime) ? minutesToHours(timeToMinutes(endTime) - timeToMinutes(startTime)) : null;
 
   const submit = () => {
@@ -1397,7 +1411,7 @@ function TimeEntryPicker({ jobs, editingEntry, onSave, onDelete, onClose }) {
   };
 
   return (
-    <div style={{ position: "absolute", zIndex: 500, background:"var(--card-bg)", border: "1.5px solid var(--border-strong)", borderRadius: 12, boxShadow: "0 8px 32px #1C233330", width: 280, overflow: "hidden" }}>
+    <div style={{ position: "absolute", zIndex: 500, background:"var(--card-bg)", border: "1.5px solid var(--border-strong)", borderRadius: 12, boxShadow: "0 8px 32px #1C233330", width: 300, overflow: "hidden" }}>
       {confirmingDelete ? (
         <div style={{ padding: 16 }}>
           <div style={{ fontSize: 13, fontWeight: 700, color: "#991B1B", marginBottom: 6 }}>Delete this entry?</div>
@@ -1414,17 +1428,19 @@ function TimeEntryPicker({ jobs, editingEntry, onSave, onDelete, onClose }) {
           </div>
           <div style={{ maxHeight: 200, overflowY: "auto" }}>
             {filtered.length === 0 && <div style={{ padding: "10px 14px", fontSize: 12, color: "#C4CAD4" }}>No jobs match.</div>}
-            {filtered.map(j => {
+                        {filtered.map(j => {
               const sm = STATUS_META[j.status] || { label: j.status, color:"var(--text-muted)" };
+              const mine = isMine(j);
               return (
                 <div key={j.id} onClick={() => setSelectedJob(j)}
-                  style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 14px", cursor: "pointer", transition: "background .1s" }}
+                  style={{ display: "flex", alignItems: "flex-start", gap: 8, padding: "8px 14px", cursor: "pointer", transition: "background .1s", borderLeft: mine ? "3px solid #10B981" : "3px solid transparent" }}
                   onMouseEnter={e => e.currentTarget.style.background="var(--bg-subtle)"}
                   onMouseLeave={e => e.currentTarget.style.background="transparent"}>
-                  <span style={{ width: 10, height: 10, borderRadius: 3, background: sm.color, flexShrink: 0 }} />
-                  <div>
-                    <div style={{ fontSize: 12, fontWeight: 700, color: ACCENT_TEXT }}>{j.id}</div>
+                  <span style={{ width: 10, height: 10, borderRadius: 3, background: sm.color, flexShrink: 0, marginTop: 3 }} />
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ fontSize: 12, fontWeight: 700, color: ACCENT_TEXT }}>{j.id}{j.workOrderNo ? <span style={{ fontWeight: 600, color: "var(--text-muted)" }}> · WO {j.workOrderNo}</span> : null}{mine && <span style={{ marginLeft: 6, fontSize: 9, fontWeight: 800, color: "#10B981", textTransform: "uppercase", letterSpacing: 0.4 }}>Assigned</span>}</div>
                     <div style={{ fontSize: 11, color:"var(--text-secondary)" }}>{j.title}</div>
+                    {j.client && <div style={{ fontSize: 11, color:"var(--text-muted)" }}>{j.client}</div>}
                   </div>
                 </div>
               );
@@ -1440,16 +1456,22 @@ function TimeEntryPicker({ jobs, editingEntry, onSave, onDelete, onClose }) {
             <span style={{ fontSize: 14, color:"var(--text-muted)" }}>←</span>
             <span style={{ fontSize: 12, fontWeight: 700, color: ACCENT_TEXT }}>{selectedJob.id}</span>
           </div>
-          <div style={{ fontSize: 12, color:"var(--text-secondary)", marginBottom: 12 }}>{selectedJob.title}</div>
+          <div style={{ fontSize: 12, color:"var(--text-secondary)", marginBottom: 12 }}>{selectedJob.title}{(selectedJob.client || selectedJob.workOrderNo) && <div style={{ fontSize: 11, color:"var(--text-muted)", marginTop: 2 }}>{[selectedJob.client, selectedJob.workOrderNo && `WO ${selectedJob.workOrderNo}`].filter(Boolean).join(" · ")}</div>}</div>
           <div style={{ display: "flex", gap: 8, marginBottom: 4 }}>
             <div style={{ flex: 1 }}>
               <label style={{ display: "block", fontSize: 11, fontWeight: 700, color:"var(--text-secondary)", marginBottom: 5, textTransform: "uppercase", letterSpacing: 0.5 }}>Start</label>
-              <input ref={startRef} type="time" value={startTime} onChange={e => { setStartTime(e.target.value); setTimeError(""); }} style={{ width: "100%", border: "1.5px solid var(--border-strong)", borderRadius: 7, padding: "7px 8px", fontSize: 13, outline: "none", boxSizing: "border-box" }} />
+              <input ref={startRef} type="time" step={(timeStep || 15) * 60} value={startTime} onChange={e => { setStartTime(e.target.value); setTimeError(""); }} style={{ width: "100%", border: "1.5px solid var(--border-strong)", borderRadius: 7, padding: "7px 8px", fontSize: 13, outline: "none", boxSizing: "border-box" }} />
             </div>
             <div style={{ flex: 1 }}>
               <label style={{ display: "block", fontSize: 11, fontWeight: 700, color:"var(--text-secondary)", marginBottom: 5, textTransform: "uppercase", letterSpacing: 0.5 }}>End</label>
-              <input type="time" value={endTime} onChange={e => { setEndTime(e.target.value); setTimeError(""); }} onKeyDown={e => e.key === "Enter" && submit()} style={{ width: "100%", border: "1.5px solid var(--border-strong)", borderRadius: 7, padding: "7px 8px", fontSize: 13, outline: "none", boxSizing: "border-box" }} />
+              <input type="time" step={(timeStep || 15) * 60} value={endTime} onChange={e => { setEndTime(e.target.value); setTimeError(""); }} onKeyDown={e => e.key === "Enter" && submit()} style={{ width: "100%", border: "1.5px solid var(--border-strong)", borderRadius: 7, padding: "7px 8px", fontSize: 13, outline: "none", boxSizing: "border-box" }} />
             </div>
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8, flexWrap: "wrap" }}>
+            <span style={{ fontSize: 11, color:"var(--text-muted)", fontWeight: 700 }}>Add time:</span>
+            {quickBtns.map(m => (
+              <button key={m} type="button" onClick={() => addDuration(m)} style={{ padding: "4px 10px", border: "1.5px solid var(--border-strong)", borderRadius: 6, background: "var(--bg-subtle)", color: "var(--text-primary)", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>+{m < 60 ? `${m}m` : `${m / 60}h`}</button>
+            ))}
           </div>
           {timeError && <div style={{ fontSize: 11, color: "#DC2626", marginBottom: 8 }}>{timeError}</div>}
           {computedHours !== null && computedHours > 0 && (
@@ -1473,6 +1495,7 @@ function TimesheetsView({ jobs, staff: allStaff, roles, timeEntries, setTimeEntr
     const staff = (settings?.timesheetsStaffIds && settings.timesheetsStaffIds.length) ? allStaff.filter(s => settings.timesheetsStaffIds.includes(s.id)) : allStaff;
   const [weekOffset, setWeekOffset] = useState(0);
   const [openCell, setOpenCell] = useState(null); // { staffId, dayIdx }
+    const showCost = !settings?.hideLabourCosts;
   const startDay = settings?.weekStartDay ?? 1;
 
   const weekStart = useMemo(() => getWeekStartDate(weekOffset, startDay), [weekOffset, startDay]);
@@ -1539,7 +1562,7 @@ function TimesheetsView({ jobs, staff: allStaff, roles, timeEntries, setTimeEntr
                 </th>
               ))}
               <th style={{ padding:"12px 8px", textAlign:"center", fontSize:12, fontWeight:700, color:"var(--text-primary)", background:"var(--bg-subtle2)", borderBottom:"2px solid var(--border)", borderLeft:"1.5px solid var(--border)", minWidth:80 }}>Total Hrs</th>
-              <th style={{ padding:"12px 8px", textAlign:"center", fontSize:12, fontWeight:700, color:"#065F46", background:"#F0FDF4", borderBottom:"2px solid var(--border)", borderLeft:"1.5px solid var(--border)", minWidth:90 }}>Labour Cost</th>
+              <th style={{ padding:"12px 8px", textAlign:"center", fontSize:12, fontWeight:700, color:"#065F46", background:"#F0FDF4", borderBottom:"2px solid var(--border)", borderLeft:"1.5px solid var(--border)", minWidth:90, display: showCost ? "table-cell" : "none" }}>Labour Cost</th>
             </tr>
           </thead>
           <tbody>
@@ -1550,7 +1573,7 @@ function TimesheetsView({ jobs, staff: allStaff, roles, timeEntries, setTimeEntr
                     <Avatar name={s.name} color={s.color} size={32}/>
                     <div>
                       <div style={{ fontSize:14, fontWeight:700, color:"var(--text-primary)" }}>{s.name}</div>
-                      <div style={{ fontSize:11, color:"var(--text-muted)" }}>{(() => { const rr = getRoleRates(s.roleId, roles); return rr.costRate ? `$${rr.costRate}/hr cost` : rr.roleName; })()}</div>
+                      <div style={{ fontSize:11, color:"var(--text-muted)" }}>{(() => { const rr = getRoleRates(s.roleId, roles); return (rr.costRate && showCost) ?`$${rr.costRate}/hr cost` : rr.roleName; })()}</div>
                     </div>
                   </div>
                 </td>
@@ -1582,7 +1605,7 @@ function TimesheetsView({ jobs, staff: allStaff, roles, timeEntries, setTimeEntr
                       </div>
                       {open && (
                         <div style={{ position:"absolute", top:"100%", left:0 }} onClick={e=>e.stopPropagation()}>
-                          <TimeEntryPicker jobs={jobs} editingEntry={editingEntry}
+                          <TimeEntryPicker jobs={jobs} editingEntry={editingEntry} staffId={s.id} dayEntries={entries} timeStep={settings?.timeStep || 15}
                             onSave={(jobId,startTime,endTime,hours)=> editingEntry ? updateEntry(editingEntry.id,jobId,startTime,endTime,hours) : addEntry(s.id,date,jobId,startTime,endTime,hours)}
                             onDelete={removeEntry}
                             onClose={()=>setOpenCell(null)} />
@@ -1592,7 +1615,7 @@ function TimesheetsView({ jobs, staff: allStaff, roles, timeEntries, setTimeEntr
                   );
                 })}
                 <td style={{ borderLeft:"1.5px solid var(--border)", background:"var(--bg-subtle2)", textAlign:"center", fontSize:13, fontWeight:800, color:"var(--text-primary)" }}>{fmt(weekTotal(s.id))}</td>
-                <td style={{ borderLeft:"1.5px solid var(--border)", background:"#F0FDF4", textAlign:"center", fontSize:13, fontWeight:800, color:"#065F46" }}>${weekCost(s.id).toFixed(2)}</td>
+                <td style={{ borderLeft:"1.5px solid var(--border)", background:"#F0FDF4", textAlign:"center", fontSize:13, fontWeight:800, color:"#065F46", display: showCost ? "table-cell" : "none" }}>${weekCost(s.id).toFixed(2)}</td>
               </tr>
             ))}
           </tbody>
@@ -1605,7 +1628,7 @@ function TimesheetsView({ jobs, staff: allStaff, roles, timeEntries, setTimeEntr
                 </td>
               ))}
               <td style={{ textAlign:"center", fontSize:13, fontWeight:900, color:"var(--text-primary)", background:"var(--bg-subtle2)", borderLeft:"1.5px solid var(--border)" }}>{fmt(grandHours())}</td>
-              <td style={{ textAlign:"center", fontSize:13, fontWeight:900, color:"#065F46", background:"#F0FDF4", borderLeft:"1.5px solid var(--border)" }}>${grandCost().toFixed(2)}</td>
+              <td style={{ textAlign:"center", fontSize:13, fontWeight:900, color:"#065F46", background:"#F0FDF4", borderLeft:"1.5px solid var(--border)", display: showCost ? "table-cell" : "none" }}>${grandCost().toFixed(2)}</td>
             </tr>
           </tfoot>
         </table>
@@ -2542,6 +2565,21 @@ function SettingsTimesheetsPage({ settings, setSettings, staff }) {
                     style={{ width: "100%", maxWidth: 220, border: "1.5px solid var(--border-strong)", borderRadius: 8, padding: "9px 12px", fontSize: 14, color: "var(--text-primary)", outline: "none", background: "var(--bg-subtle)", boxSizing: "border-box", fontWeight: 600, cursor: "pointer" }}>
                     {dayOptions.map(d => <option key={d.value} value={d.value}>{d.label}</option>)}
                 </select>
+            </div>
+           <div style={{ background: "var(--card-bg)", borderRadius: 14, padding: "18px 24px", boxShadow: "0 1px 4px #1C233310", maxWidth: 560, marginBottom: 20 }}>
+                <div style={{ fontSize: 14, fontWeight: 800, color: "var(--text-primary)", marginBottom: 2 }}>Time Entry Block Size</div>
+                <div style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 14 }}>Start/end time fields and the quick "+ time" buttons step in blocks of this size. You can still type any time.</div>
+                <select value={settings.timeStep || 15} onChange={e => setSettings(p => ({ ...p, timeStep: parseInt(e.target.value, 10) }))}
+                    style={{ width: "100%", maxWidth: 220, border: "1.5px solid var(--border-strong)", borderRadius: 8, padding: "9px 12px", fontSize: 14, color: "var(--text-primary)", outline: "none", background: "var(--bg-subtle)", boxSizing: "border-box", fontWeight: 600, cursor: "pointer" }}>
+                    {[5, 10, 15, 30, 60].map(m => <option key={m} value={m}>{m === 60 ? "1 hour" : `${m} minutes`}</option>)}
+                </select>
+            </div>
+            <div style={{ background: "var(--card-bg)", borderRadius: 14, padding: "18px 24px", boxShadow: "0 1px 4px #1C233310", maxWidth: 560, marginBottom: 20, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16 }}>
+                <div>
+                    <div style={{ fontSize: 14, fontWeight: 800, color: "var(--text-primary)", marginBottom: 2 }}>Hide Labour Costs</div>
+                    <div style={{ fontSize: 12, color: "var(--text-muted)" }}>Hides cost rates and the Labour Cost column on the Timesheets page.</div>
+                </div>
+                <ToggleSwitch on={!!settings.hideLabourCosts} onClick={() => setSettings(p => ({ ...p, hideLabourCosts: !p.hideLabourCosts }))} />
             </div>
             <StaffVisibilityPicker staff={staff} selectedIds={selected} onToggle={toggle} onShowAll={showAll} />
         </div>
