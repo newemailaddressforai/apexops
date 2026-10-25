@@ -3523,10 +3523,10 @@ function QuoteStatusModal({ quote, onSave, onClose }) {
   );
 }
 
-function QuoteBuilderModal({ quote, customers, setCustomers, roles, jobs, quotes, settings, onSave, onClose }) {
+function QuoteBuilderModal({ quote, presetJobId, customers, setCustomers, roles, jobs, quotes, settings, onSave, onClose }) {
   const [quoteNumber, setQuoteNumber] = useState(quote?.quoteNumber || nextQuoteNumber(quotes, settings));
-  const [customerName, setCustomerName] = useState(quote?.customerName || "");
-  const [jobId, setJobId] = useState(quote?.jobId || "");
+  const [customerName, setCustomerName] = useState(quote?.customerName || (presetJobId ? (jobs.find(j => j.id === presetJobId)?.client || "") : ""));
+  const [jobId, setJobId] = useState(quote?.jobId || presetJobId || "");
   const [issueDate, setIssueDate] = useState(quote?.issueDate || todayISO());
   const validDays = settings?.quoteValidDays ?? 30;
   const [validUntil, setValidUntil] = useState(quote?.validUntil || quoteAddDays(todayISO(), validDays));
@@ -3761,7 +3761,7 @@ function QuotePrintView({ quote, job, customer, company, settings, onClose }) {
   );
 }
 
-function QuotesView({ jobs, customers, setCustomers, roles, quotes, setQuotes, company, settings, setSettings, onOpenJob }) {
+function QuotesView({ invoices, setInvoices, jobs, customers, setCustomers, roles, quotes, setQuotes, company, settings, setSettings, onOpenJob }) {
   const [filter, setFilter] = useState("all");
   const [search, setSearch] = useState("");
   const [editing, setEditing] = useState(null); // quote object, "new", or null
@@ -3769,6 +3769,7 @@ function QuotesView({ jobs, customers, setCustomers, roles, quotes, setQuotes, c
   const [statusQuote, setStatusQuote] = useState(null);
   const [deleting, setDeleting] = useState(null);
 
+  const [converting, setConverting] = useState(null);
   const awaiting = quotes.filter(q => q.status === "sent");
   const rows = quotes
     .filter(q => filter === "all" || q.status === filter)
@@ -3840,6 +3841,9 @@ function QuotesView({ jobs, customers, setCustomers, roles, quotes, setQuotes, c
               <div style={{ fontSize: 14, fontWeight: 800, color: "var(--text-primary)" }}>{fmtMoney(q.total)}</div>
               <QuoteStatusBadge quote={q} onClick={() => setStatusQuote(q)} />
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                {q.status === "accepted" && (isQuoteInvoiced(q, invoices)
+                  ? <span style={{ fontSize: 12, fontWeight: 700, color: "#10B981" }}>Invoiced ✓</span>
+                  : <Btn onClick={() => setConverting(q)}>Convert to Invoice</Btn>)}
                 <Btn variant="secondary" onClick={() => setPrinting(q)}>View / Print</Btn>
                 <Btn variant="secondary" onClick={() => setEditing(q)}>Edit</Btn>
                 <Btn variant="danger" onClick={() => setDeleting(q)}>Delete</Btn>
@@ -3857,6 +3861,7 @@ function QuotesView({ jobs, customers, setCustomers, roles, quotes, setQuotes, c
         <QuotePrintView quote={printing} job={jobs.find(j => j.id === printing.jobId)} customer={customers.find(c => c.name === printing.customerName)} company={company} settings={settings} onClose={() => setPrinting(null)} />
       )}
       {statusQuote && <QuoteStatusModal quote={statusQuote} onSave={updateStatus} onClose={() => setStatusQuote(null)} />}
+      {converting && <QuoteToInvoiceModal quote={converting} job={jobs.find(j => j.id === converting.jobId)} customers={customers} invoices={invoices} setInvoices={setInvoices} settings={settings} onClose={() => setConverting(null)} />}
       {deleting && (
         <Modal title={`Delete ${deleting.quoteNumber}?`} onClose={() => setDeleting(null)}>
           <div style={{ background: "#FEF2F2", border: "1.5px solid #FCA5A5", borderRadius: 8, padding: 16 }}>
@@ -3919,7 +3924,94 @@ function SettingsQuotesPage({ settings, setSettings }) {
   );
 }
 
+// ─── QUOTES: CONVERT TO INVOICE + PER-JOB QUOTES PAGE ─────────────────────────
+function QuoteToInvoiceModal({ quote, job, customers, invoices, setInvoices, settings, onClose }) {
+  const lines = (quote.lineItems || []).map((l, i) => ({ ...l, id: liid() + "q" + i }));
+  const pseudoJob = job || { id: quote.jobId || null, client: quote.customerName, title: "", jobCosts: [] };
+  return (
+    <InvoiceBuilderModal job={pseudoJob} staff={[]} roles={[]} customers={customers} timeEntries={[]} purchaseOrders={[]} invoices={invoices} settings={settings}
+      prefill={{ lineItems: lines, notes: `Ref: Quote ${quote.quoteNumber}` + (settings?.invoiceFooterNote ? `\n${settings.invoiceFooterNote}` : "") }}
+      onSave={(inv) => { setInvoices(prev => [inv, ...prev]); onClose(true); }} onClose={() => onClose(false)} />
+  );
+}
+function isQuoteInvoiced(quote, invoices) {
+  return (invoices || []).some(i => (i.notes || "").includes(`Ref: Quote ${quote.quoteNumber}`));
+}
 
+function JobQuotesPage({ job, jobs, customers, setCustomers, roles, quotes, setQuotes, invoices, setInvoices, company, settings, setSettings, onBack }) {
+  const [editing, setEditing] = useState(null);
+  const [printing, setPrinting] = useState(null);
+  const [statusQuote, setStatusQuote] = useState(null);
+  const [deleting, setDeleting] = useState(null);
+  const [converting, setConverting] = useState(null);
+  const jobQuotes = (quotes || []).filter(q => q.jobId === job.id).sort((a, b) => (a.issueDate < b.issueDate ? 1 : -1));
+
+  const saveQuote = (q) => {
+    const isNew = !quotes.some(x => x.id === q.id);
+    setQuotes(prev => prev.some(x => x.id === q.id) ? prev.map(x => x.id === q.id ? q : x) : [q, ...prev]);
+    if (isNew) {
+      const next = advanceQuoteCounter(settings, q.quoteNumber);
+      if (next) setSettings(p => ({ ...p, quoteNextNumber: next }));
+    }
+    setEditing(null);
+  };
+
+  return (
+    <div>
+      <button onClick={onBack} style={{ background: "none", border: "none", color: "var(--text-secondary)", fontSize: 13, fontWeight: 600, cursor: "pointer", padding: 0, marginBottom: 14 }}>← Back to Job</button>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+        <div>
+          <h1 style={{ fontSize: 24, fontWeight: 900, color: "var(--text-primary)", margin: "0 0 4px" }}>Quotes</h1>
+          <p style={{ color: "var(--text-secondary)", fontSize: 14, margin: 0 }}>{job.id} · {job.title}</p>
+        </div>
+        <Btn onClick={() => setEditing("new")}>+ New Quote</Btn>
+      </div>
+
+      {jobQuotes.length === 0 ? (
+        <div style={{ background: "var(--card-bg)", borderRadius: 14, padding: 40, textAlign: "center", color: "var(--text-muted)" }}>No quotes for this job yet.</div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          {jobQuotes.map(q => (
+            <div key={q.id} style={{ background: "var(--card-bg)", borderRadius: 12, padding: "14px 18px", boxShadow: "0 1px 4px #1C233310", display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
+              <div style={{ minWidth: 100 }}>
+                <div style={{ fontSize: 13, fontWeight: 800, color: ACCENT_TEXT }}>{q.quoteNumber}</div>
+                <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 2 }}>{formatDate(q.issueDate)}</div>
+              </div>
+              <div style={{ flex: 1, fontSize: 13, color: isQuoteExpired(q) ? "#DC2626" : "var(--text-secondary)" }}>{q.validUntil ? `Valid until ${formatDate(q.validUntil)}${isQuoteExpired(q) ? " · expired" : ""}` : ""}</div>
+              <div style={{ fontSize: 14, fontWeight: 800, color: "var(--text-primary)" }}>${q.total.toFixed(2)}</div>
+              <QuoteStatusBadge quote={q} onClick={() => setStatusQuote(q)} />
+              {q.status === "accepted" && (isQuoteInvoiced(q, invoices)
+                ? <span style={{ fontSize: 12, fontWeight: 700, color: "#10B981" }}>Invoiced ✓</span>
+                : <Btn onClick={() => setConverting(q)}>Convert to Invoice</Btn>)}
+              <Btn variant="secondary" onClick={() => setPrinting(q)}>View / Print</Btn>
+              <Btn variant="secondary" onClick={() => setEditing(q)}>Edit</Btn>
+              <Btn variant="danger" onClick={() => setDeleting(q)}>Delete</Btn>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {editing && (
+        <QuoteBuilderModal quote={editing === "new" ? null : editing} presetJobId={job.id} roles={roles} customers={customers} setCustomers={setCustomers} jobs={jobs} quotes={quotes} settings={settings} onSave={saveQuote} onClose={() => setEditing(null)} />
+      )}
+      {printing && <QuotePrintView quote={printing} job={job} customer={customers.find(c => c.name === printing.customerName)} company={company} settings={settings} onClose={() => setPrinting(null)} />}
+      {statusQuote && <QuoteStatusModal quote={statusQuote} onSave={(q) => { setQuotes(prev => prev.map(x => x.id === q.id ? q : x)); setStatusQuote(null); }} onClose={() => setStatusQuote(null)} />}
+      {converting && <QuoteToInvoiceModal quote={converting} job={job} customers={customers} invoices={invoices} setInvoices={setInvoices} settings={settings} onClose={() => setConverting(null)} />}
+      {deleting && (
+        <Modal title={`Delete ${deleting.quoteNumber}?`} onClose={() => setDeleting(null)}>
+          <div style={{ background: "#FEF2F2", border: "1.5px solid #FCA5A5", borderRadius: 8, padding: 16 }}>
+            <div style={{ fontSize: 14, fontWeight: 700, color: "#991B1B", marginBottom: 6 }}>This can't be undone.</div>
+            <div style={{ fontSize: 13, color: "#7F1D1D", marginBottom: 16 }}>{deleting.quoteNumber} will be permanently deleted.</div>
+            <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
+              <Btn variant="secondary" onClick={() => setDeleting(null)}>Cancel</Btn>
+              <Btn variant="danger" onClick={() => { setQuotes(prev => prev.filter(x => x.id !== deleting.id)); setDeleting(null); }}>Yes, Delete</Btn>
+            </div>
+          </div>
+        </Modal>
+      )}
+    </div>
+  );
+}
 function ComingSoonView({ title, description, icon }) {
   return (
     <div>
@@ -4778,7 +4870,7 @@ function QuickAddCustomerModal({ customers, initialName, onSave, onClose }) {
     </Modal>
   );
 }
-function JobDetailPage({ job, staff, roles, customers, setCustomers, suppliers, timeEntries, purchaseOrders, setPurchaseOrders, invoices, company, settings, onSave, onBack, onDelete, onOpenNotes, onOpenTime, onOpenCosts, onOpenInvoices }) {  const isNew = !job;
+function JobDetailPage({ job, staff, roles, customers, setCustomers, suppliers, timeEntries, purchaseOrders, setPurchaseOrders, invoices, quotes, company, settings, onSave, onBack, onDelete, onOpenNotes, onOpenTime, onOpenCosts, onOpenInvoices, onOpenQuotes }) {  const isNew = !job;
   const [form, setForm] = useState(job || { id: nextJobNumberFromSettings(settings) || uid(), title:"", client:"", workOrderNo:"", orderNo:"", status:"not-started", assignedTo:[], holdReason:"", holdSince:null, followUpNote:"", followUpSince:null, notes:"", customFields:{}, jobNotes:[], jobCosts:[] });
   const [error, setError] = useState("");
   const [confirmingDelete, setConfirmingDelete] = useState(false);
@@ -4803,6 +4895,7 @@ function JobDetailPage({ job, staff, roles, customers, setCustomers, suppliers, 
     const jobPOs = isNew ? [] : (purchaseOrders||[]).filter(p=>p.jobId===job.id);
     const jobInvoices = isNew ? [] : (invoices||[]).filter(i=>i.jobId===job.id);
     const jobInvoicesTotal = jobInvoices.reduce((s,i)=>s+i.total,0);
+    const jobQuotes = isNew ? [] : (quotes||[]).filter(q=>q.jobId===job.id);
     const jobNoteCount = isNew ? 0 : (job.jobNotes||[]).length;
     const billedPOTotal = jobPOs.filter(po=>po.status==="billed").reduce((s,po)=>s+(po.billedCost||0),0);
     const additionalCostTotal = isNew ? 0 : (job.jobCosts||[]).reduce((s,c)=>s+c.amount,0);
@@ -4894,7 +4987,7 @@ function JobDetailPage({ job, staff, roles, customers, setCustomers, suppliers, 
 
             {/* Sub-pages: Time Allocated / Notes & Photos / Costs, each opens its own page */}
                         {!isNew && (
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 12, marginBottom: 20 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 12, marginBottom: 20 }}>
                 <button onClick={onOpenTime} style={{ textAlign: "left", background: "var(--bg-subtle)", border: "1px solid var(--border)", borderRadius: 10, padding: "14px 16px", cursor: "pointer" }}>
                   <div style={{ fontSize: 11, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 6 }}>⏱ Time Allocated</div>
                   <div style={{ fontSize: 16, fontWeight: 800, color: "var(--text-primary)" }}>{totalHours}h</div>
@@ -4908,6 +5001,11 @@ function JobDetailPage({ job, staff, roles, customers, setCustomers, suppliers, 
                   <div style={{ fontSize: 11, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 6 }}>🧾 Costs</div>
                   <div style={{ fontSize: 16, fontWeight: 800, color: "var(--text-primary)" }}>${totalCosts.toFixed(2)}</div>
                   <div style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 2 }}>{jobPOs.length} PO{jobPOs.length!==1?"s":""}</div>
+                </button>
+                <button onClick={onOpenQuotes} style={{ textAlign: "left", background: "var(--bg-subtle)", border: "1px solid var(--border)", borderRadius: 10, padding: "14px 16px", cursor: "pointer" }}>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 6 }}>▧ Quotes</div>
+                  <div style={{ fontSize: 16, fontWeight: 800, color: "var(--text-primary)" }}>{jobQuotes.length} quote{jobQuotes.length!==1?"s":""}</div>
+                  {jobQuotes.length > 0 && <div style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 2 }}>${jobQuotes.reduce((s,q)=>s+q.total,0).toFixed(2)}</div>}
                 </button>
                 <button onClick={onOpenInvoices} style={{ textAlign: "left", background: "var(--bg-subtle)", border: "1px solid var(--border)", borderRadius: 10, padding: "14px 16px", cursor: "pointer" }}>
                   <div style={{ fontSize: 11, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 6 }}>📄 Invoices</div>
@@ -5123,14 +5221,14 @@ function InvoiceStatusModal({ invoice, onSave, onClose }) {
   );
 }
 
-function InvoiceBuilderModal({ job, staff, roles, customers, timeEntries, purchaseOrders, invoices, settings, editingInvoice, onSave, onClose }) {
+function InvoiceBuilderModal({ job, staff, roles, customers, timeEntries, purchaseOrders, invoices, settings, editingInvoice, prefill, onSave, onClose }) {
   const customer = customers.find(c => c.name === job.client);
   const [invoiceNumber, setInvoiceNumber] = useState(editingInvoice?.invoiceNumber || nextInvoiceNumber(invoices, settings?.invoiceNumberPrefix));
   const [issueDate, setIssueDate] = useState(editingInvoice?.issueDate || todayISO());
   const [dueDate, setDueDate] = useState(editingInvoice?.dueDate || computeDueDate(todayISO(), settings));
   const [dueTouched, setDueTouched] = useState(false);
-  const [lines, setLines] = useState(editingInvoice?.lineItems || buildInvoiceLinesForJob(job, staff, roles, timeEntries, purchaseOrders));
-  const [notes, setNotes] = useState(editingInvoice?.notes ?? (settings?.invoiceFooterNote || ""));
+  const [lines, setLines] = useState(editingInvoice?.lineItems || prefill?.lineItems || buildInvoiceLinesForJob(job, staff, roles, timeEntries, purchaseOrders));
+  const [notes, setNotes] = useState(editingInvoice?.notes ?? prefill?.notes ?? (settings?.invoiceFooterNote || ""));
   const [error, setError] = useState("");
   const taxRate = settings?.invoiceTaxRate ?? 15;
 
@@ -5155,7 +5253,7 @@ function InvoiceBuilderModal({ job, staff, roles, customers, timeEntries, purcha
   const TYPE_LABELS = { labour: "Labour", cost: "Cost", po: "Purchase Order", custom: "Custom" };
 
   return (
-    <Modal title={editingInvoice ? `Edit ${editingInvoice.invoiceNumber}` : `New Invoice — ${job.id}`} onClose={onClose} wide>
+    <Modal title={editingInvoice ? `Edit ${editingInvoice.invoiceNumber}` : `New Invoice — ${job.id || job.client || "from quote"}`} onClose={onClose} wide>
       <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:"0 16px" }}>
         <Inp label="Invoice Number" value={invoiceNumber} onChange={e=>{ setInvoiceNumber(e.target.value); if(error) setError(""); }} />
         <Inp label="Issue Date" type="date" value={issueDate} onChange={e=>{ setIssueDate(e.target.value); if (!editingInvoice && !dueTouched && e.target.value) setDueDate(computeDueDate(e.target.value, settings)); }} />
@@ -5750,7 +5848,7 @@ syncCustomStatuses(settings.customStatuses);
         {jobPageStack.length > 0 ? (
           <>
                         {currentJobPage.view === "detail" && (
-              <JobDetailPage job={currentJob} staff={staff} roles={roles} customers={customers} setCustomers={setCustomers} suppliers={suppliers} timeEntries={timeEntries} purchaseOrders={purchaseOrders} setPurchaseOrders={setPurchaseOrders} invoices={invoices} company={company} settings={settings}
+              <JobDetailPage quotes={quotes} onOpenQuotes={()=>pushJobSubpage("quotes")} job={currentJob} staff={staff} roles={roles} customers={customers} setCustomers={setCustomers} suppliers={suppliers} timeEntries={timeEntries} purchaseOrders={purchaseOrders} setPurchaseOrders={setPurchaseOrders} invoices={invoices} company={company} settings={settings}
                 onSave={saveJob} onDelete={deleteJob} onBack={closeJobArea}
                 onOpenTime={()=>pushJobSubpage("time")} onOpenNotes={()=>pushJobSubpage("notes")} onOpenCosts={()=>pushJobSubpage("costs")} onOpenInvoices={()=>pushJobSubpage("invoices")}/>
             )}
@@ -5762,6 +5860,9 @@ syncCustomStatuses(settings.customStatuses);
             )}
             {currentJobPage.view === "costs" && (
               <JobCostsPage jobs={jobs} bills={bills} setBills={setBills} job={currentJob} suppliers={suppliers} purchaseOrders={purchaseOrders} setPurchaseOrders={setPurchaseOrders} setJobs={setJobs} company={company} settings={settings} onBack={popJobPage}/>
+            )}
+            {currentJobPage.view === "quotes" && (
+              <JobQuotesPage job={currentJob} jobs={jobs} customers={customers} setCustomers={setCustomers} roles={roles} quotes={quotes} setQuotes={setQuotes} invoices={invoices} setInvoices={setInvoices} company={company} settings={settings} setSettings={setSettings} onBack={popJobPage}/>
             )}
             {currentJobPage.view === "invoices" && (
               <JobInvoicesPage job={currentJob} staff={staff} roles={roles} customers={customers} timeEntries={timeEntries} purchaseOrders={purchaseOrders} invoices={invoices} setInvoices={setInvoices} company={company} settings={settings} onBack={popJobPage}/>
@@ -5776,7 +5877,7 @@ syncCustomStatuses(settings.customStatuses);
                           {tab === "followup" && <FollowUpView jobs={jobs} staff={staff} onEdit={j => openJob(j.id)} onBack={() => setTab("dashboard")} />}
             {tab==="timesheets"&& <TimesheetsView jobs={jobs} staff={staff} roles={roles} timeEntries={timeEntries} setTimeEntries={setTimeEntries} settings={settings}/>}
             {tab==="purchaseorders" && <PurchaseOrdersView bills={bills} setBills={setBills} jobs={jobs} staff={staff} customers={customers} suppliers={suppliers} purchaseOrders={purchaseOrders} setPurchaseOrders={setPurchaseOrders} company={company} settings={settings} onOpenJob={j=>openJob(j.id)}/>}
-            {tab==="quotes"    &&<QuotesView jobs={jobs} customers={customers} setCustomers={setCustomers} roles={roles} quotes={quotes} setQuotes={setQuotes} company={company} settings={settings} setSettings={setSettings} onOpenJob={j=>openJob(j.id)}/>}
+            {tab==="quotes"    &&<QuotesView invoices={invoices} setInvoices={setInvoices} jobs={jobs} customers={customers} setCustomers={setCustomers} roles={roles} quotes={quotes} setQuotes={setQuotes} company={company} settings={settings} setSettings={setSettings} onOpenJob={j=>openJob(j.id)}/>}
             {tab==="invoices"  && <InvoicesView jobs={jobs} customers={customers} invoices={invoices} setInvoices={setInvoices} staff={staff} roles={roles} timeEntries={timeEntries} purchaseOrders={purchaseOrders} company={company} settings={settings} onOpenJob={j=>openJob(j.id)}/>}            {tab==="bills"     && <BillsView bills={bills} setBills={setBills} setPurchaseOrders={setPurchaseOrders} setJobs={setJobs} suppliers={suppliers} jobs={jobs} purchaseOrders={purchaseOrders} settings={settings}/>}
                           {tab === "offsite" && <OffsiteView cols={offsiteTracker.cols} setCols={setOffsiteCols} data={offsiteTracker.data} setData={setOffsiteData} allocated={offsiteTracker.allocated} setAllocated={setOffsiteAllocated} />}
             {tab==="assets"    && <AssetsView assets={assets} setAssets={setAssets} groups={assetGroups} setGroups={setAssetGroups} staff={staff} settings={settings} setSettings={setSettings}/>}
