@@ -19,7 +19,7 @@ function ThemeStyle() {
   return (
     <style>{`
       [data-theme="light"] {
-        --bg-page: #F1F4F8;
+        --bg-page: #E1DED8;
         --card-bg: #ffffff;
         --bg-subtle: #F8FAFC;
         --bg-subtle2: #EFF2F8;
@@ -536,7 +536,335 @@ function Btn({ children, variant = "primary", ...props }) {
 }
 
 // ─── DASHBOARD ────────────────────────────────────────────────────────────────
-function Dashboard({ jobs, staff, roles, settings, onNavigateStatus }) {
+// ─── DASHBOARD HELPERS ────────────────────────────────────────────────────────
+const DASH_WIDGETS = [
+  { id: "status",      label: "Status Breakdown" },
+  { id: "hold",        label: "On Hold — Durations" },
+  { id: "follow",      label: "Follow Up — Durations" },
+  { id: "invoicesDue", label: "Invoices Due" },
+  { id: "costsDue",    label: "Costs Due" },
+  { id: "overdue",     label: "Overdue Invoices" },
+  { id: "offsite",     label: "Offsite Tracker" },
+  { id: "workload",    label: "Workload by Person" },
+];
+const DASH_OFFSITE_OPTIONS = [
+  { prefix: "fitter", label: "Fitter Hours", unit: "h" },
+  { prefix: "super",  label: "Super Hours",  unit: "h" },
+  { prefix: "ta",     label: "TA Hours",     unit: "h" },
+  { prefix: "kms",    label: "KMs",          unit: " km" },
+];
+const DASH_DEFAULT_OFFSITE = ["fitter", "super", "kms"];
+function getDashboardWidgets(settings) {
+  const saved = Array.isArray(settings?.dashboardWidgets) ? settings.dashboardWidgets : [];
+  const known = DASH_WIDGETS.map(w => w.id);
+  const out = saved.filter(w => known.includes(w.id)).map(w => ({ id: w.id, visible: w.visible !== false }));
+  DASH_WIDGETS.forEach(w => { if (!out.some(o => o.id === w.id)) out.push({ id: w.id, visible: true }); });
+  return out;
+}
+function weekdaysLeftInMonth(now, includeWeekends) {
+  const y = now.getFullYear(), m = now.getMonth();
+  const last = new Date(y, m + 1, 0).getDate();
+  let n = 0;
+  for (let d = now.getDate(); d <= last; d++) { const dow = new Date(y, m, d).getDay(); if (includeWeekends || (dow !== 0 && dow !== 6)) n++; }
+  return n;
+}
+
+// ─── DASHBOARD ────────────────────────────────────────────────────────────────
+function Dashboard({ jobs, staff, roles, settings, setSettings, invoices, bills, offsiteTracker, onNavigateStatus, onOpenTab }) {
+    const visibleStatuses = { ...DEFAULT_DASHBOARD_VISIBLE_STATUSES, ...(settings?.dashboardVisibleStatuses || {}) };
+    const activeJobs = jobs.filter(j => visibleStatuses[j.status] !== false);
+    const total = activeJobs.length;
+    const inProg = activeJobs.filter(j => j.status === "in-progress").length;
+    const onHold = activeJobs.filter(j => j.status === "on-hold").length;
+    const followUp = activeJobs.filter(j => j.status === "follow-up").length;
+    const readyToAssemble = activeJobs.filter(j => j.status === "ready-to-assemble").length;
+    const notStarted = activeJobs.filter(j => j.status === "not-started").length;
+    const today2 = todayISO();
+    const holdJobs = activeJobs.filter(j => j.status === "on-hold")
+        .slice()
+        .sort((a, b) => (b.holdSince ? daysDiff(b.holdSince, today2) : 0) - (a.holdSince ? daysDiff(a.holdSince, today2) : 0))
+        .slice(0, 5);
+    const followJobs = activeJobs.filter(j => j.status === "follow-up")
+        .slice()
+        .sort((a, b) => (b.followUpSince ? daysDiff(b.followUpSince, today2) : 0) - (a.followUpSince ? daysDiff(a.followUpSince, today2) : 0))
+        .slice(0, 5);
+    const dashboardStaff = (settings?.dashboardStaffIds && settings.dashboardStaffIds.length)
+        ? staff.filter(s => settings.dashboardStaffIds.includes(s.id))
+        : staff;
+    const personStats = dashboardStaff.map(s => {
+        const mine = activeJobs.filter(j => j.assignedTo.includes(s.id));
+        return { ...s, inProg: mine.filter(j => j.status === "in-progress").length, onHold: mine.filter(j => j.status === "on-hold").length, followUp: mine.filter(j => j.status === "follow-up").length, readyToAssemble: mine.filter(j => j.status === "ready-to-assemble").length, completed: 0, total: mine.length };
+    });
+  const barMax = Math.max(...personStats.map(p => p.total), 1);
+    // ── Invoices & costs due ──
+    const [invPeriod, setInvPeriod] = useState("this");
+    const [costPeriod, setCostPeriod] = useState("this");
+    const nowD = new Date();
+    const thisKey = today2.slice(0, 7);
+    const nextD = new Date(nowD.getFullYear(), nowD.getMonth() + 1, 1);
+    const nextKey = localISO(nextD).slice(0, 7);
+    const inPeriod = (dueDate, per) => per === "all" ? true : !!dueDate && dueDate.slice(0, 7) === (per === "this" ? thisKey : nextKey);
+    const unpaidInvoices = (invoices || []).filter(i => i.status !== "paid");
+    const dueInvoices = unpaidInvoices.filter(i => inPeriod(i.dueDate, invPeriod));
+    const dueInvoicesTotal = dueInvoices.reduce((s, i) => s + (i.total || 0), 0);
+    const unpaidBills = (bills || []).filter(b => b.status !== "paid");
+    const dueBills = unpaidBills.filter(b => inPeriod(b.dueDate, costPeriod));
+    const dueBillsTotal = dueBills.reduce((s, b) => s + (b.amount || 0), 0);
+    const overdueBills = unpaidBills.filter(b => b.dueDate && b.dueDate < today2);
+    const overdueBillsTotal = overdueBills.reduce((s, b) => s + (b.amount || 0), 0);
+    const overdueInvoices = unpaidInvoices.filter(i => i.dueDate && i.dueDate < today2)
+        .map(i => ({ ...i, daysOver: daysDiff(i.dueDate, today2) }))
+        .sort((a, b) => b.daysOver - a.daysOver);
+    const overdueInvoicesTotal = overdueInvoices.reduce((s, i) => s + (i.total || 0), 0);
+    const periodText = (per) => per === "this" ? "this month" : per === "next" ? "next month" : "outstanding";
+
+    // ── Offsite ──
+    const offCols = offsiteTracker?.cols || [];
+    const offData = offsiteTracker?.data || {};
+    const offAlloc = offsiteTracker?.allocated || {};
+    const offMonthKey = `${nowD.getFullYear()}-${nowD.getMonth()}`;
+    const offGroup = (prefix) => {
+        const cs = offCols.filter(c => c.type === "number" && c.label.toLowerCase().startsWith(prefix));
+        const daysInMonth = new Date(nowD.getFullYear(), nowD.getMonth() + 1, 0).getDate();
+        let used = 0, alloc = 0, hasAlloc = false;
+        cs.forEach(c => {
+            for (let d = 1; d <= daysInMonth; d++) used += parseFloat(offData[`${offMonthKey}-${d}-${c.id}`]) || 0;
+            const a = offAlloc[`alloc-${offMonthKey}-${c.id}`];
+            if (a !== undefined && a !== "") { alloc += parseFloat(a) || 0; hasAlloc = true; }
+        });
+        return { found: cs.length > 0, used, alloc, hasAlloc, rem: alloc - used };
+    };
+    const offsiteChosen = Array.isArray(settings?.dashboardOffsiteCards) && settings.dashboardOffsiteCards.length ? settings.dashboardOffsiteCards : DASH_DEFAULT_OFFSITE;
+    const weekdayAdjust = (settings?.dashboardWeekdayAdjust || {})[offMonthKey] || 0;
+    const includeWeekends = !!settings?.dashboardIncludeWeekends;
+    const weekdaysLeft = Math.max(0, weekdaysLeftInMonth(nowD, includeWeekends) - weekdayAdjust);
+    const setWeekdayAdjust = (v) => setSettings(p => ({ ...p, dashboardWeekdayAdjust: { ...(p.dashboardWeekdayAdjust || {}), [offMonthKey]: Math.max(0, v) } }));
+    const fmtN = (n) => (Math.round(n * 10) / 10).toLocaleString("en-NZ");
+
+    const CARD = { background: "var(--card-bg)", borderRadius: 14, padding: 24, boxShadow: "0 1px 4px #1C233310" };
+    const H3 = { margin: "0 0 16px", fontSize: 13, fontWeight: 800, color: "var(--text-primary)", textTransform: "uppercase", letterSpacing: 0.5 };
+    const periodToggle = null;
+    const periodToggleFn = (period, setPeriod) => (
+      <div style={{ display: "flex", gap: 3, background: "var(--bg-subtle)", borderRadius: 8, padding: 3 }}>
+        {[["this", "This Month"], ["next", "Next Month"], ["all", "Total"]].map(([id, label]) => (
+          <button key={id} onClick={() => setPeriod(id)} style={{ padding: "4px 9px", border: "none", borderRadius: 6, background: period === id ? ACCENT : "transparent", color: period === id ? INK : "var(--text-secondary)", fontWeight: 700, fontSize: 11, cursor: "pointer" }}>{label}</button>
+        ))}
+      </div>
+    );
+    const linkBtn = (label, tabId) => (
+      <button onClick={() => onOpenTab && onOpenTab(tabId)} style={{ background: "none", border: "none", padding: 0, cursor: "pointer", color: ACCENT_TEXT, fontSize: 12, fontWeight: 700 }}>{label}</button>
+    );
+
+    const widgetNodes = {
+      status: (
+        <div key="status" style={CARD}>
+                  <h3 style={{ margin: "0 0 20px", fontSize: 13, fontWeight: 800, color: "var(--text-primary)", textTransform: "uppercase", letterSpacing: 0.5 }}>Status Breakdown</h3>
+                  {Object.entries(STATUS_META).filter(([key]) => visibleStatuses[key] !== false).map(([key, { label, color }]) => {
+                      const count = activeJobs.filter(j => j.status === key).length;
+            return (
+              <div key={key} onClick={()=>onNavigateStatus(key)} style={{ marginBottom: 14, cursor:"pointer" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 5 }}>
+                  <span style={{ fontSize: 13, fontWeight: 600, color:"var(--text-secondary)" }}>{label}</span>
+                  <span style={{ fontSize: 13, fontWeight: 800, color }}>{count}</span>
+                </div>
+                <div style={{ background: "var(--bg-page)", borderRadius: 99, height: 9 }}>
+                  <div style={{ width: total ? `${(count / total) * 100}%` : "0%", background: color, height: "100%", borderRadius: 99, transition: "width .5s" }} />
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      ),
+      hold: (
+        <div key="hold" style={CARD}>
+          <h3 style={{ margin: "0 0 16px", fontSize: 13, fontWeight: 800, color:"var(--text-primary)", textTransform: "uppercase", letterSpacing: 0.5 }}>On Hold — Durations</h3>
+          {holdJobs.length === 0 ? <p style={{ color:"var(--text-muted)", fontSize: 13 }}>No jobs on hold.</p> : holdJobs.map((j, i) => {
+            const days = j.holdSince ? daysDiff(j.holdSince, todayISO()) : 0;
+            return (
+                <div key={j.id} style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12, padding: "8px 12px", background: "#FFFBF0", borderRadius: 8, borderLeft: `3px solid ${HOLD_COLORS[i % HOLD_COLORS.length]}` }}>
+                    <div style={{ flex: 1 }}>
+                        <div style={{ fontSize: 12, fontWeight: 700, color: "#78350F" }}>{j.id}</div>
+                        <div style={{ fontSize: 11, color: "#92400E", marginTop: 1 }}>{j.title}</div>
+                    </div>
+                    <div style={{ textAlign: "right" }}>
+                        <div style={{ fontSize: 18, fontWeight: 900, color: HOLD_COLORS[i % HOLD_COLORS.length] }}>{days}d</div>
+                        <div style={{ fontSize: 10, color: "#92400E" }}>on hold</div>
+                    </div>
+                </div>
+            );
+          })}
+        </div>
+      ),
+      follow: (
+        <div key="follow" style={CARD}>
+          <h3 style={{ margin: "0 0 16px", fontSize: 13, fontWeight: 800, color:"var(--text-primary)", textTransform: "uppercase", letterSpacing: 0.5 }}>Follow Up — Durations</h3>
+          {followJobs.length === 0 ? <p style={{ color:"var(--text-muted)", fontSize: 13 }}>No jobs awaiting follow up.</p> : followJobs.map((j, i) => {
+            const days = j.followUpSince ? daysDiff(j.followUpSince, todayISO()) : 0;
+            return (
+                <div key={j.id} style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12, padding: "8px 12px", background: "#FDF2F8", borderRadius: 8, borderLeft: "3px solid #EC4899" }}>
+                    <div style={{ flex: 1 }}>
+                        <div style={{ fontSize: 12, fontWeight: 700, color: "#831843" }}>{j.id}</div>
+                        <div style={{ fontSize: 11, color: "#9D174D", marginTop: 1 }}>{j.title}</div>
+                    </div>
+                    <div style={{ textAlign: "right" }}>
+                        <div style={{ fontSize: 18, fontWeight: 900, color: "#EC4899" }}>{days}d</div>
+                        <div style={{ fontSize: 10, color: "#9D174D" }}>awaiting</div>
+                    </div>
+                </div>
+            );
+          })}
+        </div>
+      ),
+      invoicesDue: (
+        <div key="invoicesDue" style={CARD}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 16 }}>
+            <h3 style={{ ...H3, margin: 0 }}>Invoices Due</h3>
+            {periodToggleFn(invPeriod, setInvPeriod)}
+            {periodToggle}
+          </div>
+          <div style={{ fontSize: 32, fontWeight: 900, color: "var(--text-primary)", lineHeight: 1 }}>{dueInvoices.length}</div>
+          <div style={{ fontSize: 12, color: "var(--text-secondary)", marginTop: 4 }}>invoice{dueInvoices.length !== 1 ? "s" : ""} {periodText(invPeriod)}</div>
+          <div style={{ fontSize: 20, fontWeight: 800, color: "#10B981", marginTop: 12 }}>{fmtMoney(dueInvoicesTotal)}</div>
+          <div style={{ fontSize: 11, color: "var(--text-muted)" }}>incl. GST</div>
+          <div style={{ marginTop: 12 }}>{linkBtn("Open Invoices →", "invoices")}</div>
+        </div>
+      ),
+      costsDue: (
+        <div key="costsDue" style={CARD}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 16 }}>
+            <h3 style={{ ...H3, margin: 0 }}>Costs Due</h3>
+            {periodToggleFn(costPeriod, setCostPeriod)}
+            {periodToggle}
+          </div>
+          <div style={{ fontSize: 32, fontWeight: 900, color: "var(--text-primary)", lineHeight: 1 }}>{dueBills.length}</div>
+          <div style={{ fontSize: 12, color: "var(--text-secondary)", marginTop: 4 }}>bill{dueBills.length !== 1 ? "s" : ""} {periodText(costPeriod)}</div>
+          <div style={{ fontSize: 20, fontWeight: 800, color: "#F59E0B", marginTop: 12 }}>{fmtMoney(dueBillsTotal)}</div>
+          <div style={{ fontSize: 11, color: "var(--text-muted)" }}>ex. GST</div>
+          {overdueBills.length > 0 && <div style={{ fontSize: 12, fontWeight: 700, color: "#DC2626", marginTop: 10 }}>{overdueBills.length} overdue · {fmtMoney(overdueBillsTotal)}</div>}
+          <div style={{ marginTop: 12 }}>{linkBtn("Open Costs →", "bills")}</div>
+        </div>
+      ),
+      overdue: (
+        <div key="overdue" style={CARD}>
+          <h3 style={H3}>Overdue Invoices</h3>
+          {overdueInvoices.length === 0 ? <p style={{ color: "var(--text-muted)", fontSize: 13, margin: 0 }}>No overdue invoices. 🎉</p> : (
+            <>
+              <div style={{ display: "flex", alignItems: "baseline", gap: 12, flexWrap: "wrap" }}>
+                <div style={{ fontSize: 32, fontWeight: 900, color: "#DC2626", lineHeight: 1 }}>{overdueInvoices.length}</div>
+                <div style={{ fontSize: 20, fontWeight: 800, color: "#DC2626" }}>{fmtMoney(overdueInvoicesTotal)}</div>
+              </div>
+              <div style={{ fontSize: 12, color: "var(--text-secondary)", margin: "4px 0 12px" }}>oldest is {overdueInvoices[0].daysOver} day{overdueInvoices[0].daysOver !== 1 ? "s" : ""} overdue</div>
+              {overdueInvoices.slice(0, 5).map(i => (
+                <div key={i.id} style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8, padding: "8px 12px", background: "#FEF2F2", borderRadius: 8, borderLeft: "3px solid #DC2626" }}>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 12, fontWeight: 700, color: "#991B1B" }}>{i.invoiceNumber}</div>
+                    <div style={{ fontSize: 11, color: "#B91C1C", marginTop: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{i.customerName || "—"}</div>
+                  </div>
+                  <div style={{ textAlign: "right" }}>
+                    <div style={{ fontSize: 14, fontWeight: 900, color: "#DC2626" }}>{i.daysOver}d</div>
+                    <div style={{ fontSize: 11, color: "#991B1B" }}>{fmtMoney(i.total)}</div>
+                  </div>
+                </div>
+              ))}
+              {overdueInvoices.length > 5 && <div style={{ fontSize: 11, color: "var(--text-muted)" }}>+ {overdueInvoices.length - 5} more</div>}
+              <div style={{ marginTop: 8 }}>{linkBtn("Open Invoices →", "invoices")}</div>
+            </>
+          )}
+        </div>
+      ),
+      offsite: (
+        <div key="offsite" style={CARD}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+            <h3 style={{ ...H3, margin: 0 }}>Offsite — {MONTH_NAMES[nowD.getMonth()]}</h3>
+            {linkBtn("Open →", "offsite")}
+          </div>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap", background: "var(--bg-subtle)", borderRadius: 10, padding: "12px 14px", marginBottom: 12 }}>
+            <div>
+              <div style={{ fontSize: 28, fontWeight: 900, color: "var(--text-primary)", lineHeight: 1 }}>{weekdaysLeft}</div>
+              <div style={{ fontSize: 12, color: "var(--text-secondary)", marginTop: 3 }}>{includeWeekends ? "day" : "weekday"}{weekdaysLeft !== 1 ? "s" : ""} left this month</div>
+              <button onClick={() => setSettings(p => ({ ...p, dashboardIncludeWeekends: !includeWeekends }))} style={{ marginTop: 6, background: "none", border: "none", padding: 0, cursor: "pointer", color: ACCENT_TEXT, fontSize: 11, fontWeight: 700 }}>{includeWeekends ? "✓ Weekends included" : "Weekends excluded"} (tap to change)</button>
+            </div>
+            <div style={{ textAlign: "right" }}>
+              <div style={{ fontSize: 10, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", marginBottom: 4 }}>Days off / holidays</div>
+              <div style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                <button onClick={() => setWeekdayAdjust(weekdayAdjust - 1)} style={{ width: 24, height: 24, borderRadius: 6, border: "1.5px solid var(--border-strong)", background: "var(--card-bg)", color: "var(--text-primary)", fontWeight: 800, cursor: "pointer" }}>−</button>
+                <span style={{ minWidth: 18, textAlign: "center", fontWeight: 800, fontSize: 14, color: "var(--text-primary)" }}>{weekdayAdjust}</span>
+                <button onClick={() => setWeekdayAdjust(weekdayAdjust + 1)} style={{ width: 24, height: 24, borderRadius: 6, border: "1.5px solid var(--border-strong)", background: "var(--card-bg)", color: "var(--text-primary)", fontWeight: 800, cursor: "pointer" }}>+</button>
+              </div>
+            </div>
+          </div>
+          {DASH_OFFSITE_OPTIONS.filter(o => offsiteChosen.includes(o.prefix)).map(o => {
+            const g = offGroup(o.prefix);
+            if (!g.found) return (
+              <div key={o.prefix} style={{ padding: "10px 0", borderBottom: "1px solid var(--border)", fontSize: 12, color: "var(--text-muted)" }}>{o.label}: no matching column on the Offsite Tracker.</div>
+            );
+            const over = g.hasAlloc && g.rem < 0;
+            return (
+              <div key={o.prefix} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, padding: "10px 0", borderBottom: "1px solid var(--border)" }}>
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: "var(--text-primary)" }}>{o.label}</div>
+                  <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 2 }}>{g.hasAlloc ? `${fmtN(g.used)} used of ${fmtN(g.alloc)}${o.unit}` : `${fmtN(g.used)}${o.unit} used · no allocation set`}</div>
+                </div>
+                {g.hasAlloc && (
+                  <div style={{ textAlign: "right" }}>
+                    <div style={{ fontSize: 18, fontWeight: 900, color: over ? "#DC2626" : "#10B981" }}>{fmtN(g.rem)}{o.unit}</div>
+                    <div style={{ fontSize: 10, color: "var(--text-muted)" }}>{over ? "over" : weekdaysLeft > 0 ? `remaining · ~${fmtN(g.rem / weekdaysLeft)}${o.unit}/day` : "remaining"}</div>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      ),
+      workload: (
+      <div key="workload" style={{ ...CARD, gridColumn: "1 / -1" }}>
+        <h3 style={{ margin: "0 0 20px", fontSize: 13, fontWeight: 800, color:"var(--text-primary)", textTransform: "uppercase", letterSpacing: 0.5 }}>Workload by Person</h3>
+        {personStats.map(p => (
+          <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 14 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, width: 150, minWidth: 150 }}>
+              <Avatar name={p.name} color={p.color} size={30} />
+              <div>
+                <div style={{ fontSize: 13, fontWeight: 700, color:"var(--text-primary)" }}>{p.name.split(" ")[0]}</div>
+                <div style={{ fontSize: 10, color:"var(--text-muted)" }}>{getRoleRates(p.roleId, roles).roleName}</div>
+              </div>
+            </div>
+            <div style={{ flex: 1, display: "flex", gap: 3, alignItems: "center" }}>
+              {p.inProg > 0 && <div title={`${p.inProg} in progress`} style={{ width: `${(p.inProg / barMax) * 60}%`, minWidth: 28, height: 22, background: "#10B981", borderRadius: "4px 0 0 4px", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 700, color: "#fff" }}>{p.inProg}</div>}
+              {p.onHold > 0 && <div title={`${p.onHold} on hold`} style={{ width: `${(p.onHold / barMax) * 60}%`, minWidth: 24, height: 22, background: "#F59E0B", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 700, color: "#fff" }}>{p.onHold}</div>}
+              {p.followUp > 0 && <div title={`${p.followUp} follow up`} style={{ width: `${(p.followUp / barMax) * 60}%`, minWidth: 24, height: 22, background: "#EC4899", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 700, color: "#fff" }}>{p.followUp}</div>}
+              {p.readyToAssemble > 0 && <div title={`${p.readyToAssemble} ready to assemble`} style={{ width: `${(p.readyToAssemble / barMax) * 60}%`, minWidth: 24, height: 22, background: "#06B6D4", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 700, color: "#fff" }}>{p.readyToAssemble}</div>}
+              {p.completed > 0 && <div title={`${p.completed} completed`} style={{ width: `${(p.completed / barMax) * 60}%`, minWidth: 24, height: 22, background: "#6366F1", borderRadius: "0 4px 4px 0", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 700, color: "#fff" }}>{p.completed}</div>}
+              {p.total === 0 && <span style={{ fontSize: 12, color: "var(--border-strong)" }}>No jobs</span>}
+            </div>
+            <div style={{ width: 36, textAlign: "right", fontSize: 13, fontWeight: 800, color:"var(--text-primary)" }}>{p.total}</div>
+          </div>
+        ))}
+      </div>
+      ),
+    };
+    const widgetOrder = getDashboardWidgets(settings).filter(w => w.visible);
+
+  return (
+    <div>
+      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-end", marginBottom:28 }}>
+        <div>
+          <h1 style={{ fontSize: 24, fontWeight: 900, color:"var(--text-primary)", margin: "0 0 6px" }}>Dashboard</h1>
+          <p style={{ color:"var(--text-secondary)", fontSize: 14, margin: 0 }}>{new Date().toLocaleDateString("en-AU", { weekday: "long", year: "numeric", month: "long", day: "numeric" })}</p>
+        </div>
+        <button onClick={()=>onNavigateStatus("all")} style={{ background:"none", border:"none", cursor:"pointer", textAlign:"right", padding:0 }}>
+          <div style={{ fontSize:28, fontWeight:900, color:"var(--text-primary)", lineHeight:1 }}>{total}</div>
+          <div style={{ fontSize:12, color:"var(--text-secondary)", marginTop:2 }}>Total Jobs</div>
+        </button>
+      </div>
+
+      <div className="dashboard-summary-grid" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))", gap: 20, alignItems: "start" }}>
+        {widgetOrder.map(w => widgetNodes[w.id])}
+        {widgetOrder.length === 0 && <div style={{ gridColumn: "1 / -1", textAlign: "center", color: "var(--text-muted)", padding: 40, fontSize: 14 }}>Everything is hidden. Choose what to show under Settings → Dashboard.</div>}
+      </div>
+    </div>
+  );
+}
+function DashboardOld({ jobs, staff, roles, settings, onNavigateStatus }) {
     const visibleStatuses = { ...DEFAULT_DASHBOARD_VISIBLE_STATUSES, ...(settings?.dashboardVisibleStatuses || {}) };
     const activeJobs = jobs.filter(j => visibleStatuses[j.status] !== false);
     const total = activeJobs.length;
@@ -2585,6 +2913,61 @@ function SettingsTimesheetsPage({ settings, setSettings, staff }) {
         </div>
     );
 }
+// ─── DASHBOARD LAYOUT SETTINGS ────────────────────────────────────────────────
+function DashboardLayoutSettings({ settings, setSettings }) {
+  const widgets = getDashboardWidgets(settings);
+  const chosen = Array.isArray(settings?.dashboardOffsiteCards) && settings.dashboardOffsiteCards.length ? settings.dashboardOffsiteCards : DASH_DEFAULT_OFFSITE;
+  const saveWidgets = (list) => setSettings(p => ({ ...p, dashboardWidgets: list }));
+  const move = (idx, dir) => {
+    const list = widgets.slice();
+    const j = idx + dir;
+    if (j < 0 || j >= list.length) return;
+    [list[idx], list[j]] = [list[j], list[idx]];
+    saveWidgets(list);
+  };
+  const toggleWidget = (id) => saveWidgets(widgets.map(w => w.id === id ? { ...w, visible: !w.visible } : w));
+  const toggleOffsite = (prefix) => {
+    const next = chosen.includes(prefix) ? chosen.filter(x => x !== prefix) : [...chosen, prefix];
+    setSettings(p => ({ ...p, dashboardOffsiteCards: next.length ? next : [prefix] }));
+  };
+  const arrow = (disabled) => ({ width: 28, height: 28, borderRadius: 6, border: "1.5px solid var(--border-strong)", background: "var(--card-bg)", color: "var(--text-primary)", fontWeight: 800, cursor: disabled ? "not-allowed" : "pointer", opacity: disabled ? 0.35 : 1 });
+  return (
+    <div>
+      <div style={{ background: "var(--card-bg)", borderRadius: 14, padding: 24, boxShadow: "0 1px 4px #1C233310", maxWidth: 560, marginBottom: 20 }}>
+        <h2 style={{ fontSize: 15, fontWeight: 800, color: "var(--text-primary)", margin: "0 0 4px" }}>Dashboard Cards</h2>
+        <p style={{ fontSize: 12, color: "var(--text-muted)", margin: "0 0 16px" }}>Choose which cards show on the Dashboard and the order they appear in. Use the arrows to move a card up or down.</p>
+        <div style={{ display: "flex", flexDirection: "column" }}>
+          {widgets.map((w, idx) => {
+            const def = DASH_WIDGETS.find(d => d.id === w.id);
+            return (
+              <div key={w.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, padding: "9px 4px", borderBottom: "1px solid var(--border)" }}>
+                <span style={{ fontSize: 13, fontWeight: 600, color: w.visible ? "var(--text-primary)" : "var(--text-muted)" }}>{idx + 1}. {def?.label}</span>
+                <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <button disabled={idx === 0} onClick={() => move(idx, -1)} style={arrow(idx === 0)}>↑</button>
+                  <button disabled={idx === widgets.length - 1} onClick={() => move(idx, 1)} style={arrow(idx === widgets.length - 1)}>↓</button>
+                  <ToggleSwitch on={w.visible} onClick={() => toggleWidget(w.id)} />
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      <div style={{ background: "var(--card-bg)", borderRadius: 14, padding: 24, boxShadow: "0 1px 4px #1C233310", maxWidth: 560, marginBottom: 20 }}>
+        <h2 style={{ fontSize: 15, fontWeight: 800, color: "var(--text-primary)", margin: "0 0 4px" }}>Offsite Card</h2>
+        <p style={{ fontSize: 12, color: "var(--text-muted)", margin: "0 0 16px" }}>Choose which remaining totals show on the Offsite card. Totals come from the Offsite Tracker for the current month (columns are matched by name, e.g. “Fitter T1” and “Fitter T2” are added together). Use the − / + buttons on the card itself to take off holidays or days off from the weekdays-left count.</p>
+        <div style={{ display: "flex", flexDirection: "column" }}>
+          {DASH_OFFSITE_OPTIONS.map(o => (
+            <div key={o.prefix} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "9px 4px", borderBottom: "1px solid var(--border)" }}>
+              <span style={{ fontSize: 13, fontWeight: 600, color: "var(--text-primary)" }}>{o.label}</span>
+              <ToggleSwitch on={chosen.includes(o.prefix)} onClick={() => toggleOffsite(o.prefix)} />
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
 function SettingsDashboardPage({ settings, setSettings, staff }) {
     const selected = settings.dashboardStaffIds && settings.dashboardStaffIds.length ? settings.dashboardStaffIds : staff.map(s => s.id);
     const allSelected = selected.length === staff.length;
@@ -2701,7 +3084,7 @@ function SettingsView({ settings, setSettings, jobs, staff, setStaff, roles, set
 
         <div style={{ flex:1, minWidth:0 }}>
                   {page === "system" && <SettingsSystemPage settings={settings} setSettings={setSettings} />}
-                  {page === "dashboard" && <SettingsDashboardPage settings={settings} setSettings={setSettings} staff={staff} />}
+                 {page === "dashboard" && <><DashboardLayoutSettings settings={settings} setSettings={setSettings} /><SettingsDashboardPage settings={settings} setSettings={setSettings} staff={staff} /></>}
           {page === "jobs" && <SettingsJobsPage settings={settings} setSettings={setSettings} jobs={jobs} onImport={onImport} />}
                   {page === "schedule" && <SettingsSchedulerPage settings={settings} setSettings={setSettings} staff={staff} />}
                   {page === "timesheets" && <SettingsTimesheetsPage settings={settings} setSettings={setSettings} staff={staff} />}
@@ -5870,7 +6253,7 @@ syncCustomStatuses(settings.customStatuses);
           </>
         ) : (
           <>
-                          {tab === "dashboard" && <Dashboard jobs={jobs} staff={staff} roles={roles} settings={settings} onNavigateStatus={navigateToStatus} />}
+                          {tab === "dashboard" && <Dashboard jobs={jobs} staff={staff} roles={roles} settings={settings} setSettings={setSettings} invoices={invoices} bills={bills} offsiteTracker={offsiteTracker} onOpenTab={setTab} onNavigateStatus={navigateToStatus} />}
                           {tab === "jobs" && <JobsView key={jobsViewKey} jobs={jobs} staff={staff} customers={customers} settings={settings} setSettings={setSettings} initialFilter={jobsPresetFilter} showCompleted={showCompletedJobs} setShowCompleted={setShowCompletedJobs} sortKey={jobsSortKey} setSortKey={setJobsSortKey} sortDir={jobsSortDir} setSortDir={setJobsSortDir} search={jobsSearch} setSearch={setJobsSearch} onAdd={openNewJob} onEdit={j => openJob(j.id)} onBack={() => setTab("dashboard")} />}
             {tab==="onhold"    && <OnHoldView jobs={jobs} staff={staff} onEdit={j=>openJob(j.id)} onBack={()=>setTab("dashboard")}/>}
                           {tab === "schedule" && <SchedulerView jobs={jobs} staff={staff} roles={roles} settings={settings} scheduleData={schedulerDataObj.scheduleData} setScheduleData={setScheduleData} />}
