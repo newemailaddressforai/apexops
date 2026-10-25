@@ -1,5 +1,5 @@
 import { useState, useMemo, useRef, useEffect, useLayoutEffect, Fragment } from "react";import { supabase } from "./supabaseClient";
-import { useSyncedTable, useSyncedSingleton, useSyncedJobs, fetchAllData, ensureSingletonsExist, staffMap, rolesMap, contactMap, companyMap, settingsMap, timeEntryMap, poMap, assetMap, assetGroupMap, schedulerDataMap, offsiteTrackerMap, invoiceMap, billMap } from "./db";
+import { useSyncedTable, useSyncedSingleton, useSyncedJobs, fetchAllData, ensureSingletonsExist, staffMap, rolesMap, contactMap, companyMap, settingsMap, timeEntryMap, poMap, assetMap, assetGroupMap, schedulerDataMap, offsiteTrackerMap, invoiceMap, billMap, quoteMap } from "./db";
 import logoSidebar from "./assets/logo-sidebar.png";
 import { LoginScreen, FullScreenStatus } from "./AuthScreens";
 import JSZip from "jszip";
@@ -2706,7 +2706,7 @@ function SettingsView({ settings, setSettings, jobs, staff, setStaff, roles, set
                   {page === "schedule" && <SettingsSchedulerPage settings={settings} setSettings={setSettings} staff={staff} />}
                   {page === "timesheets" && <SettingsTimesheetsPage settings={settings} setSettings={setSettings} staff={staff} />}
           {page === "purchaseorders" && <SettingsPurchaseOrdersPage settings={settings} setSettings={setSettings} />}
-          {page === "quotes" && <SettingsEmptyPage label="Quotes" />}
+          {page === "quotes" && <SettingsQuotesPage settings={settings} setSettings={setSettings} />}
           {page === "invoices" && <SettingsInvoicesPage settings={settings} setSettings={setSettings} />}
           {page === "bills" && <SettingsEmptyPage label="Bills" />}
           {page === "offsite" && <SettingsEmptyPage label="Offsite" />}
@@ -3454,6 +3454,471 @@ function CostBillModal({ cost, job, bills, setBills, setJobs, suppliers, jobs, p
       onClose={onClose} />
   );
 }
+
+// ─── QUOTES ───────────────────────────────────────────────────────────────────
+const QUOTE_STATUS_META = {
+  draft: { label: "Draft", color: "#9CA3AF" },
+  sent: { label: "Sent", color: "#F59E0B" },
+  accepted: { label: "Accepted", color: "#10B981" },
+  declined: { label: "Declined", color: "#DC2626" },
+};
+function quid() { return "qt" + Date.now() + Math.floor(Math.random() * 1000); }
+function quoteAddDays(iso, n) {
+  const [y, m, d] = (iso || todayISO()).split("-").map(Number);
+  return localISO(new Date(y, m - 1, d + n));
+}
+// Next quote number from Settings (prefix + counter). Skips numbers already used; falls back to counting up from existing quotes.
+function nextQuoteNumber(quotes, settings) {
+  const prefix = settings?.quoteNumberPrefix ?? "QUO-";
+  const cur = settings?.quoteNextNumber;
+  if (cur && /^\d+$/.test(cur)) {
+    let n = parseInt(cur, 10);
+    let candidate = prefix + cur;
+    while (quotes.some(q => q.quoteNumber === candidate)) { n += 1; candidate = prefix + String(n).padStart(cur.length, "0"); }
+    return candidate;
+  }
+  const nums = quotes.map(q => parseInt((q.quoteNumber || "").replace(/\D/g, ""), 10)).filter(n => !isNaN(n));
+  return `${prefix}${(nums.length ? Math.max(...nums) : 1000) + 1}`;
+}
+// After a new quote is saved, works out what the counter should move to (keeps leading zeros). Returns null if no change is needed.
+function advanceQuoteCounter(settings, savedNumber) {
+  const prefix = settings?.quoteNumberPrefix ?? "QUO-";
+  const cur = settings?.quoteNextNumber || "";
+  if (!cur || !/^\d+$/.test(cur) || !savedNumber.startsWith(prefix)) return null;
+  const tail = savedNumber.slice(prefix.length);
+  if (!/^\d+$/.test(tail)) return null;
+  const savedNum = parseInt(tail, 10);
+  if (savedNum < parseInt(cur, 10)) return null;
+  return String(savedNum + 1).padStart(cur.length, "0");
+}
+function isQuoteExpired(q) { return q.status === "sent" && !!q.validUntil && q.validUntil < todayISO(); }
+
+function QuoteStatusBadge({ quote, onClick }) {
+  const meta = QUOTE_STATUS_META[quote.status] || QUOTE_STATUS_META.draft;
+  return (
+    <button onClick={onClick} style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "4px 10px", borderRadius: 99, border: "1.5px solid " + meta.color, background: meta.color + "18", color: meta.color, fontWeight: 800, fontSize: 11, textTransform: "uppercase", letterSpacing: 0.3, cursor: "pointer" }}>
+      <span style={{ width: 7, height: 7, borderRadius: "50%", background: meta.color }} />
+      {meta.label}
+    </button>
+  );
+}
+
+function QuoteStatusModal({ quote, onSave, onClose }) {
+  return (
+    <Modal title={`Update Status — ${quote.quoteNumber}`} onClose={onClose}>
+      <p style={{ fontSize: 12, color: "var(--text-muted)", margin: "0 0 16px" }}>Choose the current status of this quote.</p>
+      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        {Object.entries(QUOTE_STATUS_META).map(([key, meta]) => (
+          <button key={key} onClick={() => onSave({ ...quote, status: key })}
+            style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", borderRadius: 9, border: quote.status === key ? `2px solid ${meta.color}` : "1.5px solid var(--border-strong)", background: quote.status === key ? meta.color + "18" : "var(--card-bg)", cursor: "pointer", textAlign: "left" }}>
+            <span style={{ width: 10, height: 10, borderRadius: "50%", background: meta.color }} />
+            <span style={{ fontWeight: 700, color: "var(--text-primary)", fontSize: 14 }}>{meta.label}</span>
+          </button>
+        ))}
+      </div>
+      <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 20 }}>
+        <Btn variant="secondary" onClick={onClose}>Close</Btn>
+      </div>
+    </Modal>
+  );
+}
+
+function QuoteBuilderModal({ quote, customers, setCustomers, roles, jobs, quotes, settings, onSave, onClose }) {
+  const [quoteNumber, setQuoteNumber] = useState(quote?.quoteNumber || nextQuoteNumber(quotes, settings));
+  const [customerName, setCustomerName] = useState(quote?.customerName || "");
+  const [jobId, setJobId] = useState(quote?.jobId || "");
+  const [issueDate, setIssueDate] = useState(quote?.issueDate || todayISO());
+  const validDays = settings?.quoteValidDays ?? 30;
+  const [validUntil, setValidUntil] = useState(quote?.validUntil || quoteAddDays(todayISO(), validDays));
+  const [validTouched, setValidTouched] = useState(!!quote);
+  const [status, setStatus] = useState(quote?.status || "draft");
+  const [lines, setLines] = useState(quote?.lineItems || [{ id: liid(), type: "custom", description: "", quantity: 1, unitPrice: 0 }]);
+  const [notes, setNotes] = useState(quote?.notes ?? (settings?.quoteTerms || ""));
+  const [addingCustomer, setAddingCustomer] = useState(false);
+  const [error, setError] = useState("");
+  const taxRate = quote?.taxRate ?? settings?.invoiceTaxRate ?? 15;
+  const [hrRole, setHrRole] = useState("");
+  const [hrQty, setHrQty] = useState("");
+  const addHours = () => {
+    const r = (roles || []).find(x => x.id === hrRole);
+    const h = parseFloat(hrQty);
+    if (!r || !h) return;
+    const line = { id: liid(), type: "labour", description: `Labour — ${r.name}`, quantity: h, unitPrice: r.chargeOutRate || 0 };
+    setLines(prev => (prev.length === 1 && !(prev[0].description || "").trim() && !Number(prev[0].unitPrice)) ? [line] : [...prev, line]);
+    setHrQty(""); setError("");
+  };
+
+  const updateLine = (id, field, value) => setLines(prev => prev.map(l => l.id === id ? { ...l, [field]: value } : l));
+  const removeLine = (id) => setLines(prev => prev.filter(l => l.id !== id));
+  const addLine = () => setLines(prev => [...prev, { id: liid(), type: "custom", description: "", quantity: 1, unitPrice: 0 }]);
+  const { subtotal, taxAmount, total } = calcInvoiceTotals(lines, taxRate);
+
+  const onJobChange = (v) => {
+    setJobId(v); setError("");
+    const j = jobs.find(x => x.id === v.trim());
+    if (j && j.client && !customerName) setCustomerName(j.client);
+  };
+
+  const handleSave = () => {
+    if (!quoteNumber.trim()) { setError("Quote number is required."); return; }
+    if (!customerName.trim()) { setError("Choose a customer (or add a new one)."); return; }
+    const jid = jobId.trim();
+    if (jid && !jobs.some(j => j.id === jid)) { setError("That job number wasn't found. Pick one from the list, or leave it blank."); return; }
+    const usable = lines.filter(l => (l.description || "").trim() || Number(l.unitPrice));
+    if (usable.length === 0) { setError("Add at least one line item."); return; }
+    const t = calcInvoiceTotals(usable, taxRate);
+    onSave({
+      id: quote?.id || quid(), quoteNumber: quoteNumber.trim(), jobId: jid || null, customerName: customerName.trim(),
+      status, issueDate, validUntil: validUntil || null, lineItems: usable, taxRate,
+      subtotal: t.subtotal, taxAmount: t.taxAmount, total: t.total, notes,
+      createdAt: quote?.createdAt || todayISO(),
+    });
+  };
+
+  const labelStyle = { display: "block", fontSize: 12, fontWeight: 700, color: "var(--text-secondary)", marginBottom: 5, textTransform: "uppercase", letterSpacing: 0.5 };
+  const cell = { border: "1.5px solid var(--border-strong)", borderRadius: 7, padding: "7px 8px", fontSize: 13, background: "var(--card-bg)", color: "var(--text-primary)", outline: "none" };
+  return (
+    <Modal title={quote ? `Edit ${quote.quoteNumber}` : "New Quote"} onClose={onClose} wide>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0 16px" }}>
+        <Inp label="Quote Number" value={quoteNumber} onChange={e => { setQuoteNumber(e.target.value); setError(""); }} />
+        <Sel label="Status" value={status} onChange={e => setStatus(e.target.value)} options={Object.entries(QUOTE_STATUS_META).map(([value, m]) => ({ value, label: m.label }))} />
+        <div style={{ marginBottom: 14 }}>
+          <label style={labelStyle}>Customer</label>
+          <CustomerPicker customers={customers} value={customerName} onChange={v => { setCustomerName(v); setError(""); }} onAddNew={(name) => setAddingCustomer(name || true)} />
+        </div>
+        <Inp label="Job (optional)" list="quote-job-list" value={jobId} onChange={e => onJobChange(e.target.value)} placeholder="Start typing a job number" />
+        <Inp label="Issue Date" type="date" value={issueDate} onChange={e => { setIssueDate(e.target.value); if (!validTouched && e.target.value) setValidUntil(quoteAddDays(e.target.value, validDays)); }} />
+        <Inp label="Valid Until" type="date" value={validUntil} onChange={e => { setValidUntil(e.target.value); setValidTouched(true); }} />
+      </div>
+      <datalist id="quote-job-list">
+        {jobs.map(j => <option key={j.id} value={j.id}>{j.title}{j.client ? ` — ${j.client}` : ""}</option>)}
+      </datalist>
+
+      <label style={{ ...labelStyle, marginBottom: 8 }}>Line Items</label>
+      <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 12, maxHeight: 280, overflowY: "auto" }}>
+        {lines.map(l => (
+          <div key={l.id} style={{ display: "flex", gap: 8, alignItems: "flex-start", background: "var(--bg-subtle)", borderRadius: 8, padding: 10 }}>
+            <input value={l.description} onChange={e => updateLine(l.id, "description", e.target.value)} placeholder="Description" style={{ ...cell, flex: 2, minWidth: 0, boxSizing: "border-box" }} />
+            <input type="number" value={l.quantity} onChange={e => updateLine(l.id, "quantity", parseFloat(e.target.value) || 0)} placeholder="Qty" style={{ ...cell, width: 70 }} />
+            <input type="number" value={l.unitPrice} onChange={e => updateLine(l.id, "unitPrice", parseFloat(e.target.value) || 0)} placeholder="Price" style={{ ...cell, width: 90 }} />
+            <div style={{ width: 90, textAlign: "right", fontSize: 13, fontWeight: 700, color: "var(--text-primary)", paddingTop: 8 }}>${((l.quantity || 0) * (l.unitPrice || 0)).toFixed(2)}</div>
+            <button onClick={() => removeLine(l.id)} style={{ background: "none", border: "none", color: "var(--text-muted)", fontSize: 16, cursor: "pointer", padding: "6px 2px" }}>×</button>
+          </div>
+        ))}
+        {lines.length === 0 && <div style={{ fontSize: 12, color: "var(--text-muted)", textAlign: "center", padding: 16 }}>No line items yet.</div>}
+      </div>
+      {roles && roles.length > 0 && (
+        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", background: "var(--bg-subtle)", borderRadius: 8, padding: 10, marginBottom: 8 }}>
+          <span style={{ fontSize: 12, fontWeight: 700, color: "var(--text-secondary)" }}>Add hours:</span>
+          <select value={hrRole} onChange={e => setHrRole(e.target.value)} style={{ ...cell, flex: 1, minWidth: 160 }}>
+            <option value="">Choose a role…</option>
+            {roles.filter(r => r.chargeOutRate > 0).map(r => <option key={r.id} value={r.id}>{r.name} — ${r.chargeOutRate}/hr</option>)}
+          </select>
+          <input type="number" min="0" step="0.5" value={hrQty} onChange={e => setHrQty(e.target.value)} placeholder="Hours" style={{ ...cell, width: 80 }} />
+          <Btn variant="secondary" onClick={addHours}>+ Add</Btn>
+        </div>
+      )}
+      <button onClick={addLine}style={{ background: "none", border: "1.5px dashed var(--border-strong)", borderRadius: 8, padding: "8px 0", width: "100%", color: "var(--text-secondary)", fontSize: 13, fontWeight: 600, cursor: "pointer", marginBottom: 20 }}>+ Add Line Item</button>
+
+      <div style={{ background: "var(--bg-subtle)", borderRadius: 8, padding: "14px 18px", marginBottom: 20 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, color: "var(--text-secondary)", marginBottom: 6 }}><span>Subtotal</span><span>${subtotal.toFixed(2)}</span></div>
+        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, color: "var(--text-secondary)", marginBottom: 6 }}><span>Tax ({taxRate}%)</span><span>${taxAmount.toFixed(2)}</span></div>
+        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 16, fontWeight: 900, color: "var(--text-primary)", paddingTop: 8, borderTop: "1px solid var(--border-strong)" }}><span>Total</span><span>${total.toFixed(2)}</span></div>
+      </div>
+
+      <div style={{ marginBottom: 20 }}>
+        <label style={labelStyle}>Notes / Terms</label>
+        <textarea value={notes} onChange={e => setNotes(e.target.value)} rows={3} placeholder="e.g. Prices are valid for 30 days. Work to start on acceptance of this quote."
+          style={{ width: "100%", border: "1.5px solid var(--border-strong)", borderRadius: 8, padding: "9px 12px", fontSize: 14, background: "var(--bg-subtle)", boxSizing: "border-box", resize: "vertical", outline: "none", color: "var(--text-primary)", fontFamily: "'Inter',system-ui,sans-serif" }} />
+      </div>
+
+      {error && <div style={{ fontSize: 12, color: "#DC2626", marginBottom: 14 }}>{error}</div>}
+      <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
+        <Btn variant="secondary" onClick={onClose}>Cancel</Btn>
+        <Btn onClick={handleSave}>{quote ? "Save Changes" : "Create Quote"}</Btn>
+      </div>
+
+      {addingCustomer && (
+        <QuickAddCustomerModal customers={customers} initialName={typeof addingCustomer === "string" ? addingCustomer : ""} onClose={() => setAddingCustomer(false)}
+          onSave={(c) => { setCustomers(p => [...p, c]); setCustomerName(c.name); setAddingCustomer(false); }} />
+      )}
+    </Modal>
+  );
+}
+
+function QuotePrintView({ quote, job, customer, company, settings, onClose }) {
+  const footerNote = settings?.quoteFooterNote || "Thank you for the opportunity to quote.";
+
+  const handleEmailQuote = async () => {
+    await downloadElementAsPDF("quote-print-area", `${quote.quoteNumber}.pdf`);
+    const email = customer?.email || "";
+    const subject = encodeURIComponent(`Quote ${quote.quoteNumber} from ${company?.name || ""}`);
+    const body = encodeURIComponent(`Hi ${customer?.contactPerson || customer?.name || ""},\n\nPlease find attached quote ${quote.quoteNumber} for $${quote.total.toFixed(2)}${quote.validUntil ? `, valid until ${formatDate(quote.validUntil)}` : ""}.\n\nThe PDF has just been downloaded to your computer — please attach it to this email before sending.\n\nKind regards,\n${company?.name || ""}`);
+    window.location.href = `mailto:${email}?subject=${subject}&body=${body}`;
+  };
+
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "#5C6B82", zIndex: 3000, overflowY: "auto" }}>
+      <style>{`
+        @page { size: A4; margin: 0; }
+        @media print {
+          html, body { width: 210mm; height: 297mm; }
+          body * { visibility: hidden; }
+          #quote-print-area, #quote-print-area * { visibility: visible; }
+          #quote-print-area {
+            position: absolute; top: 0; left: 0;
+            width: 210mm; min-height: 297mm; max-width: none;
+            margin: 0; box-shadow: none;
+            background: #fff !important; color: #1C2333 !important;
+          }
+          .no-print { display: none !important; }
+        }
+      `}</style>
+      <div className="no-print" style={{ position: "sticky", top: 0, background: "#1C2333", padding: "14px 24px", display: "flex", justifyContent: "space-between", alignItems: "center", zIndex: 10 }}>
+        <span style={{ color: "#fff", fontWeight: 700, fontSize: 14 }}>Quote {quote.quoteNumber}</span>
+        <div style={{ display: "flex", gap: 10 }}>
+          <Btn onClick={() => window.print()}>🖨 Print</Btn>
+          <Btn variant="secondary" onClick={() => downloadElementAsPDF("quote-print-area", `${quote.quoteNumber}.pdf`)}>⬇ Save as PDF</Btn>
+          <Btn variant="secondary" onClick={handleEmailQuote}>✉ Email Quote</Btn>
+          <Btn variant="secondary" onClick={onClose}>Close</Btn>
+        </div>
+      </div>
+      <div id="quote-print-area" style={{ background: "#fff", width: "210mm", minHeight: "297mm", margin: "30px auto", padding: "18mm 16mm", boxSizing: "border-box", boxShadow: "0 4px 24px #00000030", fontFamily: "'Inter',system-ui,sans-serif", color: "#1C2333" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 36, paddingBottom: 24, borderBottom: "2px solid #1C2333" }}>
+          <div>
+            <div style={{ fontSize: 22, fontWeight: 900 }}>{company?.name || "Your Company Name"}</div>
+            {company?.address && <div style={{ fontSize: 12, color: "#5C6B82", marginTop: 6, whiteSpace: "pre-line" }}>{company.address}</div>}
+            {company?.phone && <div style={{ fontSize: 12, color: "#5C6B82", marginTop: 2 }}>{company.phone}</div>}
+            {company?.email && <div style={{ fontSize: 12, color: "#5C6B82" }}>{company.email}</div>}
+            {company?.abn && <div style={{ fontSize: 12, color: "#5C6B82", marginTop: 2 }}>GST No. {company.abn}</div>}
+          </div>
+          <div style={{ textAlign: "right" }}>
+            <div style={{ fontSize: 26, fontWeight: 900, letterSpacing: 1 }}>QUOTE</div>
+            <div style={{ fontSize: 14, fontWeight: 700, color: "#7A8A00", marginTop: 6 }}>{quote.quoteNumber}</div>
+            <div style={{ fontSize: 12, color: "#9CA3AF", marginTop: 2 }}>Issued: {formatDate(quote.issueDate)}</div>
+            {quote.validUntil && <div style={{ fontSize: 12, color: "#9CA3AF" }}>Valid until: {formatDate(quote.validUntil)}</div>}
+          </div>
+        </div>
+
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 24, marginBottom: 32 }}>
+          <div>
+            <div style={{ fontSize: 11, fontWeight: 700, color: "#9CA3AF", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 8 }}>Prepared For</div>
+            <div style={{ fontSize: 14, fontWeight: 700 }}>{customer?.name || quote.customerName || "—"}</div>
+            {customer?.contactPerson && <div style={{ fontSize: 13, color: "#5C6B82", marginTop: 3 }}>Attn: {customer.contactPerson}</div>}
+            {customer?.address && <div style={{ fontSize: 12, color: "#9CA3AF", marginTop: 6, whiteSpace: "pre-line" }}>{customer.address}</div>}
+            {customer?.email && <div style={{ fontSize: 13, color: "#5C6B82", marginTop: 3 }}>{customer.email}</div>}
+          </div>
+          {quote.jobId && (
+            <div>
+              <div style={{ fontSize: 11, fontWeight: 700, color: "#9CA3AF", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 8 }}>Job Reference</div>
+              <div style={{ fontSize: 14, fontWeight: 700 }}>{quote.jobId}</div>
+              {job?.title && <div style={{ fontSize: 13, color: "#5C6B82", marginTop: 3 }}>{job.title}</div>}
+            </div>
+          )}
+        </div>
+
+        <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 13, marginBottom: 20 }}>
+          <thead>
+            <tr style={{ background: "#F8FAFC" }}>
+              <th style={{ padding: "8px 10px", textAlign: "left", fontWeight: 700, color: "#5C6B82", borderBottom: "1px solid #E5EAF0", fontSize: 11, textTransform: "uppercase" }}>Description</th>
+              <th style={{ padding: "8px 10px", textAlign: "right", fontWeight: 700, color: "#5C6B82", borderBottom: "1px solid #E5EAF0", fontSize: 11, textTransform: "uppercase" }}>Qty</th>
+              <th style={{ padding: "8px 10px", textAlign: "right", fontWeight: 700, color: "#5C6B82", borderBottom: "1px solid #E5EAF0", fontSize: 11, textTransform: "uppercase" }}>Price</th>
+              <th style={{ padding: "8px 10px", textAlign: "right", fontWeight: 700, color: "#5C6B82", borderBottom: "1px solid #E5EAF0", fontSize: 11, textTransform: "uppercase" }}>Amount</th>
+            </tr>
+          </thead>
+          <tbody>
+            {quote.lineItems.map(l => (
+              <tr key={l.id} style={{ borderBottom: "1px solid #F1F4F8" }}>
+                <td style={{ padding: "8px 10px" }}>{l.description}</td>
+                <td style={{ padding: "8px 10px", textAlign: "right", color: "#5C6B82" }}>{l.quantity}</td>
+                <td style={{ padding: "8px 10px", textAlign: "right", color: "#5C6B82" }}>${Number(l.unitPrice).toFixed(2)}</td>
+                <td style={{ padding: "8px 10px", textAlign: "right", fontWeight: 600 }}>${(l.quantity * l.unitPrice).toFixed(2)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+
+        <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 32 }}>
+          <div style={{ width: 240 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, color: "#5C6B82", padding: "4px 0" }}><span>Subtotal</span><span>${quote.subtotal.toFixed(2)}</span></div>
+            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, color: "#5C6B82", padding: "4px 0" }}><span>Tax ({quote.taxRate}%)</span><span>${quote.taxAmount.toFixed(2)}</span></div>
+            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 16, fontWeight: 900, padding: "10px 0", marginTop: 6, borderTop: "2px solid #1C2333" }}><span>Total</span><span>${quote.total.toFixed(2)}</span></div>
+          </div>
+        </div>
+
+        {quote.notes && (
+          <div style={{ marginBottom: 32 }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: "#9CA3AF", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 8 }}>Notes &amp; Terms</div>
+            <div style={{ fontSize: 12, color: "#5C6B82", lineHeight: 1.6, whiteSpace: "pre-line" }}>{quote.notes}</div>
+          </div>
+        )}
+
+        <div style={{ marginTop: 40, paddingTop: 16, borderTop: "1px solid #E5EAF0", fontSize: 11, color: "#C4CAD4", textAlign: "center" }}>
+          {footerNote}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function QuotesView({ jobs, customers, setCustomers, roles, quotes, setQuotes, company, settings, setSettings, onOpenJob }) {
+  const [filter, setFilter] = useState("all");
+  const [search, setSearch] = useState("");
+  const [editing, setEditing] = useState(null); // quote object, "new", or null
+  const [printing, setPrinting] = useState(null);
+  const [statusQuote, setStatusQuote] = useState(null);
+  const [deleting, setDeleting] = useState(null);
+
+  const awaiting = quotes.filter(q => q.status === "sent");
+  const rows = quotes
+    .filter(q => filter === "all" || q.status === filter)
+    .filter(q => {
+      if (!search) return true;
+      const s = search.toLowerCase();
+      const job = jobs.find(j => j.id === q.jobId);
+      return q.quoteNumber.toLowerCase().includes(s) || (q.customerName || "").toLowerCase().includes(s) || (q.jobId || "").toLowerCase().includes(s) || (job?.title || "").toLowerCase().includes(s);
+    })
+    .sort((a, b) => (a.issueDate < b.issueDate ? 1 : a.issueDate > b.issueDate ? -1 : (a.quoteNumber < b.quoteNumber ? 1 : -1)));
+
+  const saveQuote = (q) => {
+    const isNew = !quotes.some(x => x.id === q.id);
+    setQuotes(prev => prev.some(x => x.id === q.id) ? prev.map(x => x.id === q.id ? q : x) : [q, ...prev]);
+    if (isNew) {
+      const next = advanceQuoteCounter(settings, q.quoteNumber);
+      if (next) setSettings(p => ({ ...p, quoteNextNumber: next }));
+    }
+    setEditing(null);
+  };
+  const updateStatus = (q) => { setQuotes(prev => prev.map(x => x.id === q.id ? q : x)); setStatusQuote(null); };
+  const deleteQuote = (id) => { setQuotes(prev => prev.filter(x => x.id !== id)); setDeleting(null); };
+
+  const chip = (id, label) => (
+    <button key={id} onClick={() => setFilter(id)} style={{ padding: "7px 16px", border: "none", borderRadius: 8, background: filter === id ? ACCENT : "transparent", color: filter === id ? INK : "#5C6B82", fontWeight: 700, fontSize: 13, cursor: "pointer" }}>{label} ({id === "all" ? quotes.length : quotes.filter(q => q.status === id).length})</button>
+  );
+
+  return (
+    <div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20, gap: 12, flexWrap: "wrap" }}>
+        <div>
+          <h1 style={{ fontSize: 24, fontWeight: 900, color: "var(--text-primary)", margin: "0 0 4px" }}>Quotes</h1>
+          <p style={{ color: "var(--text-secondary)", fontSize: 14, margin: 0 }}>{quotes.length} quote{quotes.length !== 1 ? "s" : ""}{awaiting.length ? ` · ${fmtMoney(awaiting.reduce((s, q) => s + (q.total || 0), 0))} awaiting a response` : ""}</p>
+        </div>
+        <Btn onClick={() => setEditing("new")}>+ New Quote</Btn>
+      </div>
+
+      <div style={{ display: "flex", gap: 12, alignItems: "center", marginBottom: 16, flexWrap: "wrap" }}>
+        <div style={{ display: "flex", gap: 4, background: "var(--card-bg)", borderRadius: 10, padding: 4, boxShadow: "0 1px 4px #1C233310", flexWrap: "wrap" }}>
+          {chip("all", "All")}{chip("draft", "Draft")}{chip("sent", "Sent")}{chip("accepted", "Accepted")}{chip("declined", "Declined")}
+        </div>
+        <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search quote number, customer or job…"
+          style={{ flex: 1, minWidth: 200, maxWidth: 340, border: "1.5px solid var(--border-strong)", borderRadius: 8, padding: "9px 12px", fontSize: 14, color: "var(--text-primary)", outline: "none", background: "var(--card-bg)", boxSizing: "border-box" }} />
+      </div>
+
+      <style>{`
+        .quote-row { display: grid; grid-template-columns: 110px minmax(0,1.5fr) 130px 110px 110px auto; column-gap: 14px; align-items: center; justify-items: start; }
+        @media (max-width: 767px) { .quote-row { display: flex; flex-wrap: wrap; gap: 10px; } }
+      `}</style>
+      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+        {rows.map(q => {
+          const job = jobs.find(j => j.id === q.jobId);
+          const expired = isQuoteExpired(q);
+          return (
+            <div key={q.id} className="quote-row" style={{ background: "var(--card-bg)", borderRadius: 12, padding: "14px 18px", boxShadow: "0 1px 4px #1C233310" }}>
+              <div>
+                <div style={{ fontSize: 13, fontWeight: 800, color: ACCENT_TEXT }}>{q.quoteNumber}</div>
+                <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 2 }}>{formatDate(q.issueDate)}</div>
+              </div>
+              <div style={{ minWidth: 0 }}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: "var(--text-primary)" }}>{q.customerName || "Unknown customer"}</div>
+                {job && <button onClick={() => onOpenJob(job)} style={{ background: "none", border: "none", padding: 0, cursor: "pointer", fontSize: 11, color: "var(--text-secondary)", textAlign: "left" }}>{job.id} — {job.title.slice(0, 40)}</button>}
+                {!job && q.jobId && <div style={{ fontSize: 11, color: "var(--text-muted)" }}>{q.jobId} (deleted)</div>}
+              </div>
+              <div>
+                <div style={{ fontSize: 11, color: "var(--text-muted)" }}>Valid until</div>
+                <div style={{ fontSize: 12, fontWeight: 700, color: expired ? "#DC2626" : "var(--text-secondary)" }}>{q.validUntil ? formatDate(q.validUntil) : "—"}{expired ? " · expired" : ""}</div>
+              </div>
+              <div style={{ fontSize: 14, fontWeight: 800, color: "var(--text-primary)" }}>{fmtMoney(q.total)}</div>
+              <QuoteStatusBadge quote={q} onClick={() => setStatusQuote(q)} />
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                <Btn variant="secondary" onClick={() => setPrinting(q)}>View / Print</Btn>
+                <Btn variant="secondary" onClick={() => setEditing(q)}>Edit</Btn>
+                <Btn variant="danger" onClick={() => setDeleting(q)}>Delete</Btn>
+              </div>
+            </div>
+          );
+        })}
+        {rows.length === 0 && <div style={{ textAlign: "center", color: "var(--text-muted)", padding: 40, fontSize: 14, background: "var(--card-bg)", borderRadius: 12 }}>{quotes.length === 0 ? "No quotes yet. Click “+ New Quote” to create your first one." : "No quotes match this view."}</div>}
+      </div>
+
+      {editing && (
+        <QuoteBuilderModal quote={editing === "new" ? null : editing} roles={roles} customers={customers} setCustomers={setCustomers} jobs={jobs} quotes={quotes} settings={settings} onSave={saveQuote} onClose={() => setEditing(null)} />
+      )}
+      {printing && (
+        <QuotePrintView quote={printing} job={jobs.find(j => j.id === printing.jobId)} customer={customers.find(c => c.name === printing.customerName)} company={company} settings={settings} onClose={() => setPrinting(null)} />
+      )}
+      {statusQuote && <QuoteStatusModal quote={statusQuote} onSave={updateStatus} onClose={() => setStatusQuote(null)} />}
+      {deleting && (
+        <Modal title={`Delete ${deleting.quoteNumber}?`} onClose={() => setDeleting(null)}>
+          <div style={{ background: "#FEF2F2", border: "1.5px solid #FCA5A5", borderRadius: 8, padding: 16 }}>
+            <div style={{ fontSize: 14, fontWeight: 700, color: "#991B1B", marginBottom: 6 }}>This can't be undone.</div>
+            <div style={{ fontSize: 13, color: "#7F1D1D", marginBottom: 16 }}>{deleting.quoteNumber} will be permanently deleted.</div>
+            <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
+              <Btn variant="secondary" onClick={() => setDeleting(null)}>Cancel</Btn>
+              <Btn variant="danger" onClick={() => deleteQuote(deleting.id)}>Yes, Delete</Btn>
+            </div>
+          </div>
+        </Modal>
+      )}
+    </div>
+  );
+}
+
+function SettingsQuotesPage({ settings, setSettings }) {
+  const [draft, setDraft] = useState({
+    quoteNumberPrefix: settings.quoteNumberPrefix ?? "QUO-",
+    quoteNextNumber: settings.quoteNextNumber || "",
+    quoteValidDays: settings.quoteValidDays ?? 30,
+    quoteTerms: settings.quoteTerms || "",
+    quoteFooterNote: settings.quoteFooterNote || "",
+  });
+  const [saved, setSaved] = useState(false);
+  const set = (k, v) => { setDraft(p => ({ ...p, [k]: v })); setSaved(false); };
+  const preview = draft.quoteNextNumber ? draft.quoteNumberPrefix + draft.quoteNextNumber : "";
+  const handleSave = () => {
+    setSettings(p => ({ ...p, ...draft, quoteNumberPrefix: draft.quoteNumberPrefix.trim(), quoteNextNumber: draft.quoteNextNumber.trim() }));
+    setSaved(true); setTimeout(() => setSaved(false), 2500);
+  };
+  return (
+    <div>
+      <div style={{ background: "var(--card-bg)", borderRadius: 14, padding: 24, boxShadow: "0 1px 4px #1C233310", maxWidth: 560 }}>
+        <h2 style={{ fontSize: 15, fontWeight: 800, color: "var(--text-primary)", margin: "0 0 4px" }}>Quote Numbering</h2>
+        <p style={{ fontSize: 12, color: "var(--text-muted)", margin: "0 0 16px" }}>New quotes open with the next number already filled in, and it counts up each time you save one. You can still type over it on any quote.</p>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0 16px" }}>
+          <Inp label="Prefix" value={draft.quoteNumberPrefix} onChange={e => set("quoteNumberPrefix", e.target.value)} placeholder="e.g. QUO-" />
+          <Inp label="Next Number" value={draft.quoteNextNumber} onChange={e => set("quoteNextNumber", e.target.value.replace(/\D/g, ""))} placeholder="e.g. 1001" />
+        </div>
+        <div style={{ fontSize: 12, color: "var(--text-secondary)", marginBottom: 20 }}>
+          Next new quote will be: <strong style={{ color: "var(--text-primary)" }}>{preview || "— (not set, counts up from your existing quotes)"}</strong>
+        </div>
+
+        <h2 style={{ fontSize: 15, fontWeight: 800, color: "var(--text-primary)", margin: "0 0 4px" }}>Quote Defaults</h2>
+        <p style={{ fontSize: 12, color: "var(--text-muted)", margin: "0 0 16px" }}>These apply to every new quote. You can still change anything on an individual quote.</p>
+        <Inp label="Valid For (days)" type="number" min="1" value={draft.quoteValidDays} onChange={e => set("quoteValidDays", parseInt(e.target.value, 10) || 0)} placeholder="e.g. 30" />
+        <div style={{ marginBottom: 14 }}>
+          <label style={{ display: "block", fontSize: 12, fontWeight: 700, color: "var(--text-secondary)", marginBottom: 5, textTransform: "uppercase", letterSpacing: 0.5 }}>Default Notes / Terms</label>
+          <textarea value={draft.quoteTerms} onChange={e => set("quoteTerms", e.target.value)} rows={3} placeholder="e.g. Prices are valid for 30 days. Work starts on acceptance of this quote."
+            style={{ width: "100%", border: "1.5px solid var(--border-strong)", borderRadius: 8, padding: "9px 12px", fontSize: 14, background: "var(--bg-subtle)", boxSizing: "border-box", resize: "vertical", outline: "none", color: "var(--text-primary)", fontFamily: "'Inter',system-ui,sans-serif" }} />
+        </div>
+        <Inp label="Footer Note" value={draft.quoteFooterNote} onChange={e => set("quoteFooterNote", e.target.value)} placeholder="e.g. Thank you for the opportunity to quote." />
+        <div style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 6 }}>
+          <Btn onClick={handleSave}>Save Quote Settings</Btn>
+          {saved && <span style={{ fontSize: 12, fontWeight: 700, color: "#10B981" }}>✓ Saved</span>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 
 function ComingSoonView({ title, description, icon }) {
   return (
@@ -5089,7 +5554,8 @@ export default function App() {
     const [suppliers, setSuppliers, setSuppliersSilently] = useSyncedTable("suppliers", contactMap, showSyncError);
     const [timeEntries, setTimeEntries, setTimeEntriesSilently] = useSyncedTable("time_entries", timeEntryMap, showSyncError);
     const [purchaseOrders, setPurchaseOrders, setPurchaseOrdersSilently] = useSyncedTable("purchase_orders", poMap, showSyncError);
-      const [invoices, setInvoices, setInvoicesSilently] = useSyncedTable("invoices", invoiceMap, showSyncError);
+            const [invoices, setInvoices, setInvoicesSilently] = useSyncedTable("invoices", invoiceMap, showSyncError);
+      const [quotes, setQuotes, setQuotesSilently] = useSyncedTable("quotes", quoteMap, showSyncError);
     const [bills, setBills, setBillsSilently] = useSyncedTable("bills", billMap, showSyncError);
     const [company, setCompany, setCompanySilently] = useSyncedSingleton("company", companyMap, INITIAL_COMPANY, showSyncError);
     const [settings, setSettings, setSettingsSilently] = useSyncedSingleton("settings", settingsMap, INITIAL_SETTINGS, showSyncError);
@@ -5149,6 +5615,7 @@ export default function App() {
                 if (data.schedulerData) setSchedulerDataObjSilently(data.schedulerData);
                 if (data.offsiteTracker) setOffsiteTrackerSilently(data.offsiteTracker);
                         setInvoicesSilently(data.invoices);
+                        setQuotesSilently(data.quotes);
                 setBillsSilently(data.bills);
             } catch (err) {
                 if (!cancelled) setDataError(err.message || "Something went wrong loading your data.");
@@ -5309,7 +5776,7 @@ syncCustomStatuses(settings.customStatuses);
                           {tab === "followup" && <FollowUpView jobs={jobs} staff={staff} onEdit={j => openJob(j.id)} onBack={() => setTab("dashboard")} />}
             {tab==="timesheets"&& <TimesheetsView jobs={jobs} staff={staff} roles={roles} timeEntries={timeEntries} setTimeEntries={setTimeEntries} settings={settings}/>}
             {tab==="purchaseorders" && <PurchaseOrdersView bills={bills} setBills={setBills} jobs={jobs} staff={staff} customers={customers} suppliers={suppliers} purchaseOrders={purchaseOrders} setPurchaseOrders={setPurchaseOrders} company={company} settings={settings} onOpenJob={j=>openJob(j.id)}/>}
-            {tab==="quotes"    && <ComingSoonView title="Quotes" description="Send customers a priced quote before the work begins." icon="▧"/>}
+            {tab==="quotes"    &&<QuotesView jobs={jobs} customers={customers} setCustomers={setCustomers} roles={roles} quotes={quotes} setQuotes={setQuotes} company={company} settings={settings} setSettings={setSettings} onOpenJob={j=>openJob(j.id)}/>}
             {tab==="invoices"  && <InvoicesView jobs={jobs} customers={customers} invoices={invoices} setInvoices={setInvoices} staff={staff} roles={roles} timeEntries={timeEntries} purchaseOrders={purchaseOrders} company={company} settings={settings} onOpenJob={j=>openJob(j.id)}/>}            {tab==="bills"     && <BillsView bills={bills} setBills={setBills} setPurchaseOrders={setPurchaseOrders} setJobs={setJobs} suppliers={suppliers} jobs={jobs} purchaseOrders={purchaseOrders} settings={settings}/>}
                           {tab === "offsite" && <OffsiteView cols={offsiteTracker.cols} setCols={setOffsiteCols} data={offsiteTracker.data} setData={setOffsiteData} allocated={offsiteTracker.allocated} setAllocated={setOffsiteAllocated} />}
             {tab==="assets"    && <AssetsView assets={assets} setAssets={setAssets} groups={assetGroups} setGroups={setAssetGroups} staff={staff} settings={settings} setSettings={setSettings}/>}

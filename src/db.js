@@ -63,6 +63,22 @@ const companyMap = {
   fromRow: (r) => ({ name: r.name, address: r.address, phone: r.phone, email: r.email, abn: r.abn }),
 };
 
+const quoteMap = {
+  toRow: (q) => ({
+    id: q.id, quote_number: q.quoteNumber, job_id: q.jobId || null, customer_name: q.customerName || "",
+    status: q.status, issue_date: q.issueDate, valid_until: q.validUntil || null,
+    line_items: q.lineItems || [], tax_rate: q.taxRate ?? 15,
+    subtotal: q.subtotal || 0, tax_amount: q.taxAmount || 0, total: q.total || 0, notes: q.notes || "",
+  }),
+  fromRow: (r) => ({
+    id: r.id, quoteNumber: r.quote_number, jobId: r.job_id, customerName: r.customer_name,
+    status: r.status, issueDate: r.issue_date, validUntil: r.valid_until,
+    lineItems: r.line_items || [], taxRate: r.tax_rate != null ? Number(r.tax_rate) : 15,
+    subtotal: Number(r.subtotal)||0, taxAmount: Number(r.tax_amount)||0, total: Number(r.total)||0,
+    notes: r.notes || "", createdAt: r.created_at?.split("T")[0],
+  }),
+};
+
 const settingsMap = {
   toRow: (s) => ({
     id: "main",
@@ -86,6 +102,11 @@ const settingsMap = {
     invoice_terms: s.invoiceTerms || "",
     invoice_tax_rate: s.invoiceTaxRate ?? 15,
     invoice_number_prefix: s.invoiceNumberPrefix || "INV",
+    quote_number_prefix: s.quoteNumberPrefix ?? "QUO-",
+    quote_next_number: s.quoteNextNumber || "",
+    quote_valid_days: s.quoteValidDays ?? 30,
+    quote_terms: s.quoteTerms || "",
+    quote_footer_note: s.quoteFooterNote || "",
     job_number_prefix: s.jobNumberPrefix || "",
         job_next_number: s.jobNextNumber || "",
     custom_statuses: s.customStatuses || [],
@@ -114,6 +135,11 @@ const settingsMap = {
     invoiceTerms: r.invoice_terms || "",
     invoiceTaxRate: r.invoice_tax_rate != null ? Number(r.invoice_tax_rate) : 15,
     invoiceNumberPrefix: r.invoice_number_prefix || "INV",
+    quoteNumberPrefix: r.quote_number_prefix ?? "QUO-",
+    quoteNextNumber: r.quote_next_number || "",
+    quoteValidDays: r.quote_valid_days != null ? Number(r.quote_valid_days) : 30,
+    quoteTerms: r.quote_terms || "",
+    quoteFooterNote: r.quote_footer_note || "",
     jobNumberPrefix: r.job_number_prefix || "",
         jobNextNumber: r.job_next_number || "",
     customStatuses: r.custom_statuses || [],
@@ -302,7 +328,7 @@ export async function fetchAllData() {
       const [
     staffRes, rolesRes, customersRes, suppliersRes, companyRes, settingsRes,
     jobsRes, jobNotesRes, jobCostsRes, timeEntriesRes, poRes, assetsRes, assetGroupsRes,
-    schedulerRes, offsiteRes, invoicesRes, billsRes,
+    schedulerRes, offsiteRes, invoicesRes, billsRes, quotesRes,
   ] = await Promise.all([
         supabase.from("staff").select("*"),
         supabase.from("roles").select("*"),
@@ -320,10 +346,11 @@ export async function fetchAllData() {
     supabase.from("scheduler_data").select("*").eq("id", "main").maybeSingle(),
     supabase.from("offsite_tracker").select("*").eq("id", "main").maybeSingle(),
     supabase.from("invoices").select("*"),
-    supabase.from("bills").select("*"),
+        supabase.from("bills").select("*"),
+    supabase.from("quotes").select("*"),
     ]);
 
-  const firstError = [staffRes, rolesRes, customersRes, suppliersRes, companyRes, settingsRes, jobsRes, jobNotesRes, jobCostsRes, timeEntriesRes, poRes, assetsRes, assetGroupsRes, schedulerRes, offsiteRes, invoicesRes, billsRes].find(r => r.error);  if (firstError?.error) throw firstError.error;
+  const firstError = [staffRes, rolesRes, customersRes, suppliersRes, companyRes, settingsRes, jobsRes, jobNotesRes, jobCostsRes, timeEntriesRes, poRes, assetsRes, assetGroupsRes, schedulerRes, offsiteRes, invoicesRes, billsRes, quotesRes].find(r => r.error);  if (firstError?.error) throw firstError.error;
 
   // Attach notes/costs onto their parent job
   const notesByJob = {};
@@ -352,7 +379,8 @@ export async function fetchAllData() {
             schedulerData: schedulerRes.data ? schedulerDataMap.fromRow(schedulerRes.data) : null,
     offsiteTracker: offsiteRes.data ? offsiteTrackerMap.fromRow(offsiteRes.data) : null,
     invoices: (invoicesRes.data || []).map(invoiceMap.fromRow),
-    bills: (billsRes.data || []).map(billMap.fromRow),
+        bills: (billsRes.data || []).map(billMap.fromRow),
+    quotes: (quotesRes.data || []).map(quoteMap.fromRow),
   };
 }
 
@@ -370,4 +398,4 @@ export async function ensureSingletonsExist(defaultCompany, defaultSettings, def
     const { data: existingOffsite } = await supabase.from("offsite_tracker").select("id").eq("id", "main").maybeSingle();
     if (!existingOffsite) await supabase.from("offsite_tracker").insert(offsiteTrackerMap.toRow(defaultOffsiteTracker));
 }
-export { staffMap, rolesMap, contactMap, companyMap, settingsMap, timeEntryMap, poMap, assetMap, assetGroupMap, jobCoreMap, jobNoteMap, jobCostMap, schedulerDataMap, offsiteTrackerMap, invoiceMap, billMap };
+export { staffMap, rolesMap, contactMap, companyMap, settingsMap, timeEntryMap, poMap, assetMap, assetGroupMap, jobCoreMap, jobNoteMap, jobCostMap, schedulerDataMap, offsiteTrackerMap, invoiceMap, billMap, quoteMap };
